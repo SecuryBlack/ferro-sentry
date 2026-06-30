@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package securyblack.tunnel.v1;
+
+option go_package = "github.com/securyblack/securyblack-edge-gateway/proto/tunnel/v1;tunnelv1";
+
+service TunnelService {
+  rpc Stream(stream TunnelEnvelope) returns (stream TunnelEnvelope);
+}
+
+message TunnelEnvelope {
+  oneof payload {
+    ClientHello       hello         = 1;
+    ServerHello       server_hello  = 2;
+    Heartbeat         heartbeat     = 3;
+    bytes             otlp_metrics_payload = 4;
+    DeployCommand     deploy_cmd    = 5;
+    DeployLog         deploy_log    = 6;
+    DeployStatus      deploy_status = 7;
+    CommandRequest    command       = 8;
+    CommandResponse   command_resp  = 9;
+    AgentStatus       agent_status  = 10;
+    bytes             security_event_payload = 11;
+  }
+}
+
+message ClientHello {
+  string agent_id = 1;
+  string token = 2;
+  string agent_type = 3;
+  string version = 4;
+  repeated AgentInfo local_agents = 5 [deprecated = true];
+  string os = 6;
+  string arch = 7;
+  string hostname = 8;
+}
+
+message ServerHello {
+  bool   accepted  = 1;
+  string reason    = 2;
+  string session_id = 3;
+  string agent_id  = 4;
+}
+
+message Heartbeat {
+  int64 timestamp_ms = 1;
+}
+
+message AgentInfo {
+  string name    = 1;
+  string version = 2;
+  string status  = 3;
+}
+
+message AgentStatus {
+  repeated AgentInfo agents = 1;
+  int64 timestamp_ms = 2;
+}
+
+message DeployCommand {
+  string deployment_id = 1;
+  string project_id    = 2;
+  oneof action {
+    GitPullAction       git_pull       = 3;
+    DockerBuildAction   docker_build   = 4;
+    DockerComposeAction docker_compose = 5;
+  }
+}
+
+message GitPullAction {
+  string repo_url  = 1;
+  string branch    = 2;
+  string commit_sha = 3;
+}
+
+message DockerBuildAction {
+  string context_dir = 1;
+  string dockerfile  = 2;
+  string tag         = 3;
+}
+
+message DockerComposeAction {
+  string file         = 1;
+  string project_name = 2;
+  map<string, string> env = 3;
+}
+
+message DeployLog {
+  string deployment_id = 1;
+  string stream        = 2;
+  string message       = 3;
+  int64  timestamp_ms  = 4;
+}
+
+message DeployStatus {
+  string deployment_id = 1;
+  string status        = 2;
+  int64  duration_ms   = 3;
+  string error_message = 4;
+}
+
+message CommandRequest {
+  string command_id   = 1;
+  string command_type = 2;
+  string payload      = 3;
+  int32  timeout_secs = 4;
+}
+
+message CommandResponse {
+  string command_id = 1;
+  bool   success    = 2;
+  string stdout     = 3;
+  string stderr     = 4;
+  int32  exit_code  = 5;
+  int64  duration_ms = 6;
+}
+
+service SecurityService {
+  rpc SendEvent(SecurityEventRequest) returns (SecurityEventResponse);
+}
+
+message SecurityEventRequest {
+  string event_json = 1;
+}
+
+message SecurityEventResponse {
+  bool success = 1;
+}
