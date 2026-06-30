@@ -25,7 +25,7 @@ function Fail          { param($msg) Write-Host "[ferro-sentry] ERROR: $msg" -Fo
 $GithubRepo  = "securyblack/ferro-sentry"
 $BinaryName  = "ferro-sentry.exe"
 $InstallDir  = "$env:ProgramFiles\FerroSentry"
-$ConfigDir   = "$env:ProgramData\ferrosentry"
+$ConfigDir   = "$env:ProgramData\ferro-sentry"
 $ConfigFile  = "$ConfigDir\config.toml"
 $ServiceName = "FerroSentry"
 
@@ -135,7 +135,7 @@ mode = "$Mode"
 api_url = "$Endpoint"
 token = "$Token"
 log_level = "info"
-local_file_path = "C:\ProgramData\ferrosentry\ferro-sentry_events.jsonl"
+local_file_path = "C:\ProgramData\ferro-sentry\ferro-sentry_events.jsonl"
 "@
 
     Set-Content -Path $ConfigFile -Value $configContent
