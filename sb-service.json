@@ -1,0 +1,8 @@
+{
+  "name": "Ferro Sentry",
+  "description": "Agente de seguridad y postura de servidores en Rust",
+  "type": "rust",
+  "role": "agent",
+  "start": "cargo run",
+  "autoRestart": false
+}

@@ -1,0 +1,4 @@
+token = "fs_test_token_12345"
+mode = "local_file"
+local_file_path = "ferro-sentry_events.jsonl"
+log_level = "debug"
