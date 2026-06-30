@@ -118,9 +118,9 @@ try {
         $Endpoint = Read-Host "  SecuryBlack API endpoint (e.g. https://api.securyblack.com)"
     }
     if (-not $Token) {
-        $Token = Read-Host -AsSecureString "  Auth token"
-        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Token)
-        $Token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+        $secToken = Read-Host "  Auth token" -AsSecureString
+        $Token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secToken))
     }
 
     if (-not $Endpoint) { Fail "Endpoint cannot be empty" }
