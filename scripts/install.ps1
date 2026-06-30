@@ -135,7 +135,7 @@ mode = "$Mode"
 api_url = "$Endpoint"
 token = "$Token"
 log_level = "info"
-local_file_path = "C:\ProgramData\ferro-sentry\ferro-sentry_events.jsonl"
+local_file_path = "C:/ProgramData/ferro-sentry/ferro-sentry_events.jsonl"
 "@
 
     Set-Content -Path $ConfigFile -Value $configContent
