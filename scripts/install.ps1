@@ -15,6 +15,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Set TLS 1.2 protocol for PowerShell 5.1 compatibility on Windows Server
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 function Write-Info    { param($msg) Write-Host "[ferro-sentry] $msg" -ForegroundColor Cyan }
 function Write-Success { param($msg) Write-Host "[ferro-sentry] $msg" -ForegroundColor Green }
