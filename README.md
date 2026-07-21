@@ -285,3 +285,10 @@ Ferro-Sentry se registra automáticamente en Conduit si está presente. Si no, u
 3. **Respuesta automática:** ¿Fase 5 o nunca? Es peligroso en producción.
 4. **Windows Event Log:** ¿Usamos crate `windows` directo o biblioteca como `winevt`?
 
+---
+
+## License
+
+FerroSentry is licensed under the [Apache License, Version 2.0](LICENSE).
+
+
