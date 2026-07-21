@@ -111,9 +111,10 @@ try {
         New-Item -ItemType Directory -Path $ConfigDir | Out-Null
     }
 
-    if ($Mode -eq "local_agent") {
-        if (-not $Endpoint) { $Endpoint = "http://localhost:8080" }
-        Write-Info "Mode: local_agent — Ferro-Sentry will send events to $Endpoint"
+    if ($Mode -eq "local_agent" -or $Mode -eq "agent") {
+        $Mode = "agent"
+        if (-not $Endpoint) { $Endpoint = "http://localhost:4317" }
+        Write-Info "Mode: agent — Ferro-Sentry will send events to $Endpoint"
     }
 
     # Interactively ask if missing

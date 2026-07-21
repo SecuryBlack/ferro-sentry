@@ -58,7 +58,7 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
     // Crear output según modo
     let output: Arc<dyn Output> = match cfg.mode.as_str() {
         "direct" => Arc::new(DirectOutput::new(&cfg.api_url, &cfg.token)),
-        "agent" => Arc::new(SbAgentOutput::new()),
+        "agent" | "local_agent" => Arc::new(SbAgentOutput::new()),
         _ => Arc::new(LocalFileOutput::new(&cfg.local_file_path)),
     };
 
