@@ -135,6 +135,7 @@ try {
     $configContent = @"
 # Ferro-Sentry configuration
 # Do not share this file — it contains your auth token.
+version = "$version"
 mode = "$Mode"
 api_url = "$Endpoint"
 token = "$Token"

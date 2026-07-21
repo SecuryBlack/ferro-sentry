@@ -54,7 +54,7 @@ impl Config {
         let config_path = Self::config_path();
         let current_pkg_version = env!("CARGO_PKG_VERSION").to_string();
 
-        let mut version = current_pkg_version.clone();
+        let mut version_in_file: Option<String> = None;
         let mut api_url = default_api_url();
         let mut token = String::new();
         let mut mode = default_mode();
@@ -66,7 +66,7 @@ impl Config {
             if let Ok(contents) = fs::read_to_string(&config_path) {
                 if let Ok(file) = toml::from_str::<toml::Value>(&contents) {
                     if let Some(v) = file.get("version").and_then(|v| v.as_str()) {
-                        version = v.to_string();
+                        version_in_file = Some(v.to_string());
                     }
                     if let Some(v) = file.get("api_url").and_then(|v| v.as_str()) {
                         api_url = v.to_string();
@@ -104,9 +104,10 @@ impl Config {
             log_level = v;
         }
 
-        // Actualizar/escribir versión en config.toml si ha cambiado o no existía
-        if version != current_pkg_version || !Path::new(&config_path).exists() {
-            version = current_pkg_version.clone();
+        let version = current_pkg_version.clone();
+
+        // Actualizar/escribir versión en config.toml si ha cambiado, no existía en el archivo, o el archivo no existía
+        if version_in_file.as_deref() != Some(&current_pkg_version) || !Path::new(&config_path).exists() {
             Self::write_config(&config_path, &version, &api_url, &token, &mode, &local_file_path, &log_level);
         }
 
