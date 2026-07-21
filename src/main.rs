@@ -42,7 +42,9 @@ fn init_logging(log_level: &str) {
 }
 
 async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
-    // Intentar cargar config del sistema; si falla, intentar config local para desarrollo
+    // Inicializar logging primero para registrar cualquier posible error de inicio/configuración
+    init_logging("info");
+
     let cfg = match config::Config::load() {
         Ok(c) => c,
         Err(e) => {
@@ -51,10 +53,7 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
         }
     };
 
-    // Inicializar logging
-    init_logging(&cfg.log_level);
-
-    tracing::info!(mode = %cfg.mode, "Ferro-Sentry iniciando");
+    tracing::info!(mode = %cfg.mode, version = %cfg.version, "Ferro-Sentry iniciando");
 
     // Crear output según modo
     let output: Arc<dyn Output> = match cfg.mode.as_str() {
