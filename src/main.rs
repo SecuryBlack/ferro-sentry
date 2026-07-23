@@ -2,6 +2,7 @@ mod config;
 mod engine;
 mod modules;
 mod output;
+mod updater;
 
 use anyhow::Result;
 use engine::{EventEngine, Severity};
@@ -54,6 +55,9 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
     };
 
     tracing::info!(mode = %cfg.mode, version = %cfg.version, "Ferro-Sentry iniciando");
+
+    // Iniciar chequeo diario de actualizaciones en segundo plano
+    updater::start_daily_check();
 
     // Crear output según modo
     let output: Arc<dyn Output> = match cfg.mode.as_str() {

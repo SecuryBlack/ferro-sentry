@@ -1,6 +1,6 @@
 [package]
 name = "ferro-sentry"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "Apache-2.0"
 description = "SecuryBlack server security agent (EDR + posture)"
@@ -24,6 +24,7 @@ sha2 = "0.10"
 
 tonic = { version = "0.12", features = ["tls", "tls-roots"] }
 prost = "0.13"
+self_update = { version = "0.42", default-features = false, features = ["archive-tar", "archive-zip", "compression-flate2", "compression-zip-deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

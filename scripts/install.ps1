@@ -151,6 +151,11 @@ local_file_path = "C:/ProgramData/ferro-sentry/ferro-sentry_events.jsonl"
     $binPathWithArgs = "`"$InstallDir\$BinaryName`""
     & sc.exe create $ServiceName binPath= $binPathWithArgs start= auto DisplayName= "Ferro-Sentry Security Agent" | Out-Null
     & sc.exe description $ServiceName "SecuryBlack Ferro-Sentry security agent (EDR + Posture)" | Out-Null
+
+    # Configure restart on failure (sc.exe failure config)
+    & sc.exe failure $ServiceName reset= 86400 actions= restart/10000/restart/30000/restart/60000 | Out-Null
+    # Trigger failure actions even on clean exit (exit code 0) for auto-update restart
+    & sc.exe failureflag $ServiceName 1 | Out-Null
     
     Write-Info "Starting service..."
     Start-Service -Name $ServiceName
