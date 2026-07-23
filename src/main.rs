@@ -106,6 +106,132 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
                     }
                 }
 
+                // ─── SSH Auditor ───
+                tracing::info!("Ejecutando SSH Auditor…");
+                match modules::ssh_auditor::scan(&engine).await {
+                    Ok(findings) => {
+                        tracing::info!(count = findings.len(), "SSH Auditor completado");
+                        for event in findings {
+                            if let Some(event) = engine.process(event).await {
+                                if let Err(e) = output.send(event).await {
+                                    tracing::error!(error = %e, "Error enviando evento de SSH Auditor");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "SSH Auditor falló");
+                    }
+                }
+
+                // ─── File Integrity Monitor (FIM) ───
+                tracing::info!("Ejecutando File Integrity Monitor (FIM)…");
+                match modules::fim::scan(&engine).await {
+                    Ok(findings) => {
+                        tracing::info!(count = findings.len(), "FIM completado");
+                        for event in findings {
+                            if let Some(event) = engine.process(event).await {
+                                if let Err(e) = output.send(event).await {
+                                    tracing::error!(error = %e, "Error enviando evento de FIM");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "FIM falló");
+                    }
+                }
+
+                // ─── Permission Auditor ───
+                tracing::info!("Ejecutando Permission Auditor…");
+                match modules::permission_auditor::scan(&engine).await {
+                    Ok(findings) => {
+                        tracing::info!(count = findings.len(), "Permission Auditor completado");
+                        for event in findings {
+                            if let Some(event) = engine.process(event).await {
+                                if let Err(e) = output.send(event).await {
+                                    tracing::error!(error = %e, "Error enviando evento de Permission Auditor");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Permission Auditor falló");
+                    }
+                }
+
+                // ─── Persistence Hunter ───
+                tracing::info!("Ejecutando Persistence Hunter…");
+                match modules::persistence_hunter::scan(&engine).await {
+                    Ok(findings) => {
+                        tracing::info!(count = findings.len(), "Persistence Hunter completado");
+                        for event in findings {
+                            if let Some(event) = engine.process(event).await {
+                                if let Err(e) = output.send(event).await {
+                                    tracing::error!(error = %e, "Error enviando evento de Persistence Hunter");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Persistence Hunter falló");
+                    }
+                }
+
+                // ─── Process Sentinel ───
+                tracing::info!("Ejecutando Process Sentinel…");
+                match modules::process_sentinel::scan(&engine).await {
+                    Ok(findings) => {
+                        tracing::info!(count = findings.len(), "Process Sentinel completado");
+                        for event in findings {
+                            if let Some(event) = engine.process(event).await {
+                                if let Err(e) = output.send(event).await {
+                                    tracing::error!(error = %e, "Error enviando evento de Process Sentinel");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Process Sentinel falló");
+                    }
+                }
+
+                // ─── Firewall Auditor ───
+                tracing::info!("Ejecutando Firewall Auditor…");
+                match modules::firewall_auditor::scan(&engine).await {
+                    Ok(findings) => {
+                        tracing::info!(count = findings.len(), "Firewall Auditor completado");
+                        for event in findings {
+                            if let Some(event) = engine.process(event).await {
+                                if let Err(e) = output.send(event).await {
+                                    tracing::error!(error = %e, "Error enviando evento de Firewall Auditor");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Firewall Auditor falló");
+                    }
+                }
+
+                // ─── SSL/TLS Auditor ───
+                tracing::info!("Ejecutando SSL/TLS Auditor…");
+                match modules::ssl_auditor::scan(&engine).await {
+                    Ok(findings) => {
+                        tracing::info!(count = findings.len(), "SSL/TLS Auditor completado");
+                        for event in findings {
+                            if let Some(event) = engine.process(event).await {
+                                if let Err(e) = output.send(event).await {
+                                    tracing::error!(error = %e, "Error enviando evento de SSL/TLS Auditor");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "SSL/TLS Auditor falló");
+                    }
+                }
+
                 // ─── Eventos de prueba legacy (Fase 0) ───
                 let test_events = vec![
                     engine
