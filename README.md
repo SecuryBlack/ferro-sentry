@@ -2,7 +2,7 @@
 
 Agente de seguridad de servidor (EDR + Postura + Visibilidad) escrito en Rust. Corre dentro del servidor, detecta amenazas en tiempo real, audita la postura de seguridad y reporta a SecuryBlack Cloud.
 
-> **Estado:** Diseño y planificación (Roadmap activo).
+> **Estado:** En producción — 9 módulos de auditoría funcionando (Fase 1 completa, partes de Fase 2 y 3). Solo lectura: audita e informa, no reconfigura nada. El resto del roadmap (EDR en tiempo real, hardening, respuesta automática) sigue en desarrollo activo.
 
 ---
 
@@ -228,29 +228,29 @@ ferro-sentry/
 ## 📅 Roadmap
 
 ### Fase 0 — Fundación
-- [ ] Repo, CI/CD cross-platform, config, logging, output layer.
-- [ ] Event Engine (deduplicación, severidad, throttling).
-- [ ] Integración con Conduit (default) y fallback directo.
+- [x] Repo, CI/CD cross-platform, config, logging, output layer.
+- [ ] Event Engine (deduplicación, severidad, throttling). — dedup y severidad implementados; throttling sigue siendo un `TODO` en `engine/mod.rs`.
+- [x] Integración con Conduit (default) y fallback directo.
 
 ### Fase 1 — Visibilidad Básica (CIS Lite)
-- [ ] **Port Scanner** — Escaneo local de puertos abiertos.
-- [ ] **Listening Services** — Servicios activos y su exposición.
-- [ ] **Firewall Auditor** — Reglas de iptables/nftables/Windows Firewall.
-- [ ] **SSL/TLS Auditor** — Certificados expirados/débiles.
-- [ ] **SSH Auditor** — Configuración insegura de sshd.
-- [ ] **Permission Auditor** — SUID binaries, world-writable files.
+- [x] **Port Scanner** — Escaneo local de puertos abiertos.
+- [x] **Listening Services** — Servicios activos y su exposición.
+- [x] **Firewall Auditor** — Reglas de iptables/nftables/Windows Firewall.
+- [x] **SSL/TLS Auditor** — Certificados expirados/débiles.
+- [x] **SSH Auditor** — Configuración insegura de sshd.
+- [x] **Permission Auditor** — SUID binaries, world-writable files.
 
 ### Fase 2 — Detección en Tiempo Real (EDR Core)
-- [ ] **File Integrity Monitor (FIM)** — Baseline + watcher en tiempo real.
-- [ ] **Process Sentinel** — Procesos nuevos, árboles sospechosos.
+- [x] **File Integrity Monitor (FIM)** — Baseline + watcher en tiempo real.
+- [x] **Process Sentinel** — Procesos nuevos, árboles sospechosos.
 - [ ] **Auth Guard** — Logins fallidos, brute force, sudo.
 - [ ] **Log Watcher** — Tail de logs con reglas regex.
 
 ### Fase 3 — Postura y Hardening
-- [ ] **Vulnerability Scanner** — Versiones vs CVEs, parches pendientes.
+- [x] **Vulnerability Scanner** — Versiones vs CVEs, parches pendientes.
 - [ ] **Secrets Hunter** — API keys, credenciales en config.
 - [ ] **Kernel Security** — ASLR, SELinux/AppArmor, seccomp.
-- [ ] **Persistence Hunter** — Cron, systemd, startup.
+- [x] **Persistence Hunter** — Cron, systemd, startup.
 - [ ] **Network Watch** — Conexiones outbound sospechosas.
 
 ### Fase 4 — Container, Cloud & Malware
