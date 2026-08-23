@@ -282,11 +282,7 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
 }
 
 fn check_version_arg() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 && (args[1] == "--version" || args[1] == "-V") {
-        println!("ferro-sentry {}", env!("CARGO_PKG_VERSION"));
-        std::process::exit(0);
-    }
+    sb_agent_core::cli::dispatch_common_args("ferro-sentry", "ferro-sentry", env!("CARGO_PKG_VERSION"));
 }
 
 #[cfg(windows)]
