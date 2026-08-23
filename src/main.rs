@@ -3,7 +3,6 @@ mod engine;
 mod modules;
 mod output;
 
-use anyhow::Result;
 use engine::{EventEngine, Severity};
 use output::{sb_agent::SbAgentOutput, direct::DirectOutput, local_file::LocalFileOutput, Output};
 use std::sync::Arc;
@@ -28,6 +27,13 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
     sb_agent_core::logging::init("ferro-sentry", &log_dir, &cfg.log_level);
 
     tracing::info!(mode = %cfg.mode, version = %cfg.version, log_level = %cfg.log_level, "Ferro-Sentry iniciando");
+
+    let status_handle = sb_agent_core::status::StatusHandle::new("ferro-sentry", env!("CARGO_PKG_VERSION"));
+    sb_agent_core::status::spawn_server(
+        status_handle.clone(),
+        sb_agent_core::status::default_socket_path("ferro-sentry"),
+    );
+    status_handle.set_state("running");
 
     // Iniciar chequeo diario de actualizaciones en segundo plano.
     // Mismo STARTUP_DELAY (60s) que ya tenía FerroSentry — coincide con
@@ -259,106 +265,20 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
                 }
 
                 tracing::info!("Escaneos de seguridad completados exitosamente");
+                status_handle.set_details(serde_json::json!({
+                    "last_scan_unix": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                }));
             }
             _ = &mut shutdown => {
                 tracing::info!("Señal de apagado recibida, deteniendo Ferro-Sentry");
+                status_handle.set_state("stopping");
                 break;
             }
         }
     }
-}
-
-// ── Windows Service Support ──────────────────────────────────────────────────
-
-#[cfg(windows)]
-mod service {
-    use std::ffi::OsString;
-    use std::time::Duration;
-    use windows_service::{
-        define_windows_service,
-        service::{
-            ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
-            ServiceType,
-        },
-        service_control_handler::{self, ServiceControlHandlerResult},
-        service_dispatcher,
-    };
-
-    const SERVICE_NAME: &str = "FerroSentry";
-
-    define_windows_service!(ffi_service_main, service_main);
-
-    pub fn start() -> Result<(), windows_service::Error> {
-        service_dispatcher::start(SERVICE_NAME, ffi_service_main)
-    }
-
-    fn service_main(_arguments: Vec<OsString>) {
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let shutdown_tx = std::sync::Mutex::new(Some(shutdown_tx));
-
-        let status_handle = service_control_handler::register(
-            SERVICE_NAME,
-            move |control_event| match control_event {
-                ServiceControl::Stop | ServiceControl::Shutdown => {
-                    if let Ok(mut guard) = shutdown_tx.lock() {
-                        if let Some(tx) = guard.take() {
-                            let _ = tx.send(());
-                        }
-                    }
-                    ServiceControlHandlerResult::NoError
-                }
-                ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-                _ => ServiceControlHandlerResult::NotImplemented,
-            },
-        )
-        .expect("failed to register service control handler");
-
-        status_handle
-            .set_service_status(ServiceStatus {
-                service_type: ServiceType::OWN_PROCESS,
-                current_state: ServiceState::Running,
-                controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
-                exit_code: ServiceExitCode::Win32(0),
-                checkpoint: 0,
-                wait_hint: Duration::default(),
-                process_id: None,
-            })
-            .expect("failed to set service status Running");
-
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("failed to build tokio runtime");
-
-        rt.block_on(super::run(shutdown_rx));
-
-        let _ = status_handle.set_service_status(ServiceStatus {
-            service_type: ServiceType::OWN_PROCESS,
-            current_state: ServiceState::Stopped,
-            controls_accepted: ServiceControlAccept::empty(),
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
-            process_id: None,
-        });
-    }
-}
-
-#[cfg(windows)]
-fn run_console() {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("failed to build tokio runtime");
-
-    rt.block_on(async {
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.ok();
-            let _ = shutdown_tx.send(());
-        });
-        run(shutdown_rx).await;
-    });
 }
 
 fn check_version_arg() {
@@ -370,32 +290,24 @@ fn check_version_arg() {
 }
 
 #[cfg(windows)]
-fn main() -> Result<()> {
+fn main() {
     check_version_arg();
     // ERROR_FAILED_SERVICE_CONTROLLER_CONNECT (1063): process was not started
     // by the SCM, so run in console mode instead.
-    match service::start() {
+    match sb_agent_core::service::windows::run_service("FerroSentry", |rx| run(rx)) {
         Ok(_) => {}
-        Err(windows_service::Error::Winapi(e)) if e.raw_os_error() == Some(1063) => {
-            run_console();
+        Err(e) if sb_agent_core::service::windows::is_not_started_by_scm(&e) => {
+            sb_agent_core::service::run_console(run);
         }
         Err(e) => {
             eprintln!("[ferro-sentry] service error: {e}");
             std::process::exit(1);
         }
     }
-    Ok(())
 }
 
 #[cfg(not(windows))]
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() {
     check_version_arg();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        let _ = shutdown_tx.send(());
-    });
-    run(shutdown_rx).await;
-    Ok(())
+    sb_agent_core::service::run_console(run);
 }

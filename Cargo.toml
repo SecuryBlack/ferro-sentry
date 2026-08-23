@@ -26,9 +26,6 @@ sha2 = "0.10"
 tonic = { version = "0.12", features = ["tls", "tls-roots"] }
 prost = "0.13"
 
-[target.'cfg(windows)'.dependencies]
-windows-service = "0.7"
-
 [build-dependencies]
 tonic-build = "0.12"
 protoc-bin-vendored = "3"
