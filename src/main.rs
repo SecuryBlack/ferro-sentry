@@ -2,7 +2,6 @@ mod config;
 mod engine;
 mod modules;
 mod output;
-mod updater;
 
 use anyhow::Result;
 use engine::{EventEngine, Severity};
@@ -56,8 +55,16 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
 
     tracing::info!(mode = %cfg.mode, version = %cfg.version, "Ferro-Sentry iniciando");
 
-    // Iniciar chequeo diario de actualizaciones en segundo plano
-    updater::start_daily_check();
+    // Iniciar chequeo diario de actualizaciones en segundo plano.
+    // Mismo STARTUP_DELAY (60s) que ya tenía FerroSentry — coincide con
+    // OxiPulse, no con los 300s de nexus-agent (ese fue el drift original
+    // que motivó mover esto a sb-agent-core).
+    sb_agent_core::updater::start_daily_check(sb_agent_core::updater::UpdaterConfig::new(
+        "securyblack",
+        "ferro-sentry",
+        "ferro-sentry",
+        env!("CARGO_PKG_VERSION"),
+    ));
 
     // Crear output según modo
     let output: Arc<dyn Output> = match cfg.mode.as_str() {
