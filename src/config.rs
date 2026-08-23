@@ -1,10 +1,11 @@
-use anyhow::{Context, Result};
 use serde::Deserialize;
-use std::{env, fs, path::Path};
+use std::env;
 
+/// Carga de fichero + versión ahora vienen de `sb-agent-core`; lo que sigue
+/// siendo propio de FerroSentry son estos campos y sus variables de entorno
+/// (`FERRO_SENTRY_*`).
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// Versión del agente
     #[serde(default = "default_version")]
     pub version: String,
 
@@ -29,6 +30,19 @@ pub struct Config {
     pub log_level: String,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            version: default_version(),
+            api_url: default_api_url(),
+            token: String::new(),
+            mode: default_mode(),
+            local_file_path: default_local_path(),
+            log_level: default_log_level(),
+        }
+    }
+}
+
 pub fn default_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
@@ -50,94 +64,38 @@ pub fn default_log_level() -> String {
 }
 
 impl Config {
-    pub fn load() -> Result<Self> {
-        let config_path = Self::config_path();
-        let current_pkg_version = env!("CARGO_PKG_VERSION").to_string();
+    /// Carga `config.toml` (vía `sb_agent_core::config::load`, que hace
+    /// `T::default()` si el fichero no existe) y aplica overrides de entorno.
+    ///
+    /// Cambio de comportamiento respecto a la versión anterior: si el fichero
+    /// no existe, ya no se escribe uno nuevo con los valores por defecto — se
+    /// devuelven en memoria y ya está, igual que hacen OxiPulse/CromoForge.
+    /// El instalador siempre deja el fichero escrito, así que este caso solo
+    /// se da si alguien lo borra a mano.
+    pub fn load() -> anyhow::Result<Self> {
+        let config_path = sb_agent_core::config::default_config_path("ferro-sentry");
+        let mut cfg: Config = sb_agent_core::config::load(&config_path)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        let mut version_in_file: Option<String> = None;
-        let mut api_url = default_api_url();
-        let mut token = String::new();
-        let mut mode = default_mode();
-        let mut local_file_path = default_local_path();
-        let mut log_level = default_log_level();
-
-        // Cargar desde archivo si existe
-        if Path::new(&config_path).exists() {
-            if let Ok(contents) = fs::read_to_string(&config_path) {
-                if let Ok(file) = toml::from_str::<toml::Value>(&contents) {
-                    if let Some(v) = file.get("version").and_then(|v| v.as_str()) {
-                        version_in_file = Some(v.to_string());
-                    }
-                    if let Some(v) = file.get("api_url").and_then(|v| v.as_str()) {
-                        api_url = v.to_string();
-                    }
-                    if let Some(v) = file.get("token").and_then(|v| v.as_str()) {
-                        token = v.to_string();
-                    }
-                    if let Some(v) = file.get("mode").and_then(|v| v.as_str()) {
-                        mode = v.to_string();
-                    }
-                    if let Some(v) = file.get("local_file_path").and_then(|v| v.as_str()) {
-                        local_file_path = v.to_string();
-                    }
-                    if let Some(v) = file.get("log_level").and_then(|v| v.as_str()) {
-                        log_level = v.to_string();
-                    }
-                }
-            }
-        }
-
-        // Override con env vars
         if let Ok(v) = env::var("FERRO_SENTRY_API_URL") {
-            api_url = v;
+            cfg.api_url = v;
         }
         if let Ok(v) = env::var("FERRO_SENTRY_TOKEN") {
-            token = v;
+            cfg.token = v;
         }
         if let Ok(v) = env::var("FERRO_SENTRY_MODE") {
-            mode = v;
+            cfg.mode = v;
         }
         if let Ok(v) = env::var("FERRO_SENTRY_LOCAL_FILE_PATH") {
-            local_file_path = v;
+            cfg.local_file_path = v;
         }
         if let Ok(v) = env::var("FERRO_SENTRY_LOG_LEVEL") {
-            log_level = v;
+            cfg.log_level = v;
         }
 
-        let version = current_pkg_version.clone();
+        cfg.version = env!("CARGO_PKG_VERSION").to_string();
+        let _ = sb_agent_core::config::sync_version_field(&config_path, &cfg.version);
 
-        // Actualizar/escribir versión en config.toml si ha cambiado, no existía en el archivo, o el archivo no existía
-        if version_in_file.as_deref() != Some(&current_pkg_version) || !Path::new(&config_path).exists() {
-            Self::write_config(&config_path, &version, &api_url, &token, &mode, &local_file_path, &log_level);
-        }
-
-        Ok(Config {
-            version,
-            api_url,
-            token,
-            mode,
-            local_file_path,
-            log_level,
-        })
-    }
-
-    pub fn write_config(path: &str, version: &str, api_url: &str, token: &str, mode: &str, local_file_path: &str, log_level: &str) {
-        if let Some(parent) = Path::new(path).parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-
-        let content = format!(
-            "# Ferro-Sentry configuration\nversion = \"{}\"\nmode = \"{}\"\napi_url = \"{}\"\ntoken = \"{}\"\nlog_level = \"{}\"\nlocal_file_path = \"{}\"\n",
-            version, mode, api_url, token, log_level, local_file_path
-        );
-        let _ = fs::write(path, content);
-    }
-
-    pub fn config_path() -> String {
-        #[cfg(target_os = "windows")]
-        return r"C:\ProgramData\ferro-sentry\config.toml".to_string();
-
-        #[cfg(not(target_os = "windows"))]
-        return "/etc/ferro-sentry/config.toml".to_string();
+        Ok(cfg)
     }
 }

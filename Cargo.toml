@@ -7,6 +7,7 @@ description = "SecuryBlack server security agent (EDR + posture)"
 repository = "https://github.com/securyblack/ferro-sentry"
 
 [dependencies]
+sb-agent-core = { git = "https://github.com/securyblack/sb-agent-core", branch = "master" }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
