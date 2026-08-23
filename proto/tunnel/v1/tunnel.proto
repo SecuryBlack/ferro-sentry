@@ -4,52 +4,106 @@ package securyblack.tunnel.v1;
 
 option go_package = "github.com/securyblack/securyblack-edge-gateway/proto/tunnel/v1;tunnelv1";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TunnelService — canal bidireccional persistente entre sb-agent y la nube.
+// Un único stream gRPC multiplexa todos los mensajes del Conduit Protocol.
+// ─────────────────────────────────────────────────────────────────────────────
 service TunnelService {
   rpc Stream(stream TunnelEnvelope) returns (stream TunnelEnvelope);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TunnelEnvelope — contenedor multiplexado.
+// Cada mensaje que fluye por el túnel va envuelto en un envelope para que
+// gRPC/HTTP2 maneje un único stream bidireccional.
+// ─────────────────────────────────────────────────────────────────────────────
 message TunnelEnvelope {
   oneof payload {
+    // Handshake
     ClientHello       hello         = 1;
     ServerHello       server_hello  = 2;
+
+    // Control / keepalive
     Heartbeat         heartbeat     = 3;
+
+    // Métricas OTLP (agente → cloud)
+    // Serialización cruda de ExportMetricsServiceRequest.
     bytes             otlp_metrics_payload = 4;
-    DeployCommand     deploy_cmd    = 5;
+
+    // Estado deseado de un despliegue CromoForge (cloud → agente)
+    DesiredState      desired_state = 5;
+
+    // Logs de build en tiempo real (agente → cloud)
     DeployLog         deploy_log    = 6;
+
+    // Estado final de un deploy (agente → cloud)
     DeployStatus      deploy_status = 7;
+
+    // Comandos genéricos de gestión (cloud → agente)
     CommandRequest    command       = 8;
+
+    // Respuesta a comandos (agente → cloud)
     CommandResponse   command_resp  = 9;
+
+    // Heartbeat de agentes locales (agente → cloud)
     AgentStatus       agent_status  = 10;
+
+    // Eventos de seguridad (agente → cloud)
     bytes             security_event_payload = 11;
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Handshake
+// ─────────────────────────────────────────────────────────────────────────────
+
 message ClientHello {
+  // agent_id es opcional; si el agente no lo conoce aún puede dejarse vacío
+  // y el gateway lo asignará vinculándolo al token.
   string agent_id = 1;
+
+  // Server token (one token per server, shared by all agents on that server).
   string token = 2;
+
+  // Agent type: "nexus", "oxipulse", "ferrosentry", etc.
   string agent_type = 3;
+
+  // Versión del agente (ej: "0.2.0").
   string version = 4;
+
+  // DEPRECATED: Agentes locales detectados (ahora cada agente se reporta individualmente).
+  // Este campo se eliminará en la próxima versión del protocolo.
   repeated AgentInfo local_agents = 5 [deprecated = true];
-  string os = 6;
-  string arch = 7;
-  string hostname = 8;
+
+  // Información del host para mostrar en el dashboard.
+  string os = 6;        // "linux", "windows", "darwin"
+  string arch = 7;      // "x86_64", "aarch64"
+  string hostname = 8;  // nombre del servidor
 }
 
 message ServerHello {
   bool   accepted  = 1;
-  string reason    = 2;
-  string session_id = 3;
-  string agent_id  = 4;
+  string reason    = 2;  // motivo del rechazo si accepted == false
+  string session_id = 3; // ID de sesión para trazabilidad en logs
+  string agent_id  = 4;  // ID asignado al agente por el gateway
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Keepalive
+// ─────────────────────────────────────────────────────────────────────────────
 
 message Heartbeat {
-  int64 timestamp_ms = 1;
+  int64 timestamp_ms = 1;  // epoch millis del emisor
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Inventario de agentes locales
+// ─────────────────────────────────────────────────────────────────────────────
+
 message AgentInfo {
-  string name    = 1;
-  string version = 2;
-  string status  = 3;
+  string name    = 1;  // ej: "oxipulse", "ferrosentry"
+  string version = 2;  // ej: "1.2.0"
+  string status  = 3;  // "running" | "stopped" | "error" | "unknown"
 }
 
 message AgentStatus {
@@ -57,53 +111,74 @@ message AgentStatus {
   int64 timestamp_ms = 2;
 }
 
-message DeployCommand {
-  string deployment_id = 1;
-  string project_id    = 2;
-  oneof action {
-    GitPullAction       git_pull       = 3;
-    DockerBuildAction   docker_build   = 4;
-    DockerComposeAction docker_compose = 5;
-  }
+// ─────────────────────────────────────────────────────────────────────────────
+// CromoForge — Estado deseado (cloud → agente)
+//
+// Reemplaza el antiguo DeployCommand/GitPullAction/DockerBuildAction/
+// DockerComposeAction (rediseñado 2026-08-23): aquellos asumían comandos
+// imperativos, build en el host del cliente y Docker Compose — incompatible
+// con la arquitectura decidida para CromoForge (reconciliador, artefacto =
+// imagen OCI ya construida, Docker API directa, secretos sellados). Ninguno
+// de los cuatro mensajes viejos tenía un solo uso en src/, así que este
+// cambio no rompe nada existente.
+//
+// Espeja campo a campo el manifiesto TOML de CromoForge (ver
+// cromo-forge/TODO.md, sección "Contrato de estado deseado") — es la misma
+// forma para las tres fuentes (`securyblack`, `git`, `local`); esto es solo
+// cómo viaja por Conduit cuando la fuente es `securyblack`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+message DesiredState {
+  string app_name        = 1;
+  string image           = 2;  // ref OCI — tag inmutable o digest, nunca "latest"
+  int32  container_port  = 3;
+
+  HealthCheck    health_check = 4;
+  RolloutPolicy  rollout      = 5;
+
+  map<string, string> env             = 6;  // variables no sensibles, en claro
+  map<string, bytes>  sealed_secrets  = 7;  // nombre de variable → ciphertext sellado X25519
 }
 
-message GitPullAction {
-  string repo_url  = 1;
-  string branch    = 2;
-  string commit_sha = 3;
+message HealthCheck {
+  string path              = 1;
+  int32  interval_secs     = 2;
+  int32  timeout_secs      = 3;
+  int32  failure_threshold = 4;  // fallos consecutivos antes de disparar rollback
 }
 
-message DockerBuildAction {
-  string context_dir = 1;
-  string dockerfile  = 2;
-  string tag         = 3;
+message RolloutPolicy {
+  string strategy            = 1;  // "recreate" — único valor soportado en v1
+  bool   rollback_on_failure = 2;
 }
 
-message DockerComposeAction {
-  string file         = 1;
-  string project_name = 2;
-  map<string, string> env = 3;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// CromoForge — Deploy feedback (agente → cloud)
+// ─────────────────────────────────────────────────────────────────────────────
 
 message DeployLog {
   string deployment_id = 1;
-  string stream        = 2;
+  string stream        = 2;  // "stdout" | "stderr" | "event"
   string message       = 3;
   int64  timestamp_ms  = 4;
 }
 
 message DeployStatus {
   string deployment_id = 1;
-  string status        = 2;
+  string status        = 2;  // "pending" | "building" | "success" | "failed" | "cancelled"
   int64  duration_ms   = 3;
-  string error_message = 4;
+  string error_message = 4;  // vacío si status == "success"
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Management — Comandos genéricos (cloud → agente)
+// ─────────────────────────────────────────────────────────────────────────────
+
 message CommandRequest {
-  string command_id   = 1;
-  string command_type = 2;
-  string payload      = 3;
-  int32  timeout_secs = 4;
+  string command_id   = 1;  // UUID
+  string command_type = 2;  // "shell", "restart_service", "tail_logs"
+  string payload      = 3;  // JSON con argumentos específicos del tipo
+  int32  timeout_secs = 4;  // 0 = default del agente
 }
 
 message CommandResponse {
@@ -114,6 +189,10 @@ message CommandResponse {
   int32  exit_code  = 5;
   int64  duration_ms = 6;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local Security Ingestion Service
+// ─────────────────────────────────────────────────────────────────────────────
 
 service SecurityService {
   rpc SendEvent(SecurityEventRequest) returns (SecurityEventResponse);
@@ -126,3 +205,4 @@ message SecurityEventRequest {
 message SecurityEventResponse {
   bool success = 1;
 }
+
