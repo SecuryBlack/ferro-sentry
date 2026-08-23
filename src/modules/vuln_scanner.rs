@@ -1,9 +1,9 @@
-use crate::engine::{EventEngine, SecurityEvent};
 #[cfg(target_os = "linux")]
 use crate::engine::Severity;
+use crate::engine::{EventEngine, SecurityEvent};
+use anyhow::Result;
 #[cfg(target_os = "linux")]
 use serde_json::json;
-use anyhow::Result;
 
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -115,13 +115,11 @@ fn check_apt_updates() -> Result<(usize, usize, String)> {
 #[cfg(target_os = "linux")]
 fn check_dnf_updates() -> Result<(usize, usize, String)> {
     // Get all updates
-    let output = Command::new("dnf")
-        .args(&["check-update", "-q"])
-        .output()?;
-    
+    let output = Command::new("dnf").args(&["check-update", "-q"]).output()?;
+
     // dnf check-update returns 100 if updates are available, 0 if none, 1 on error
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
+
     let mut total = 0;
     for line in stdout.lines() {
         let trimmed = line.trim();
@@ -148,12 +146,10 @@ fn check_dnf_updates() -> Result<(usize, usize, String)> {
 
 #[cfg(target_os = "linux")]
 fn check_yum_updates() -> Result<(usize, usize, String)> {
-    let output = Command::new("yum")
-        .args(&["check-update", "-q"])
-        .output()?;
-    
+    let output = Command::new("yum").args(&["check-update", "-q"]).output()?;
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
+
     let mut total = 0;
     for line in stdout.lines() {
         let trimmed = line.trim();

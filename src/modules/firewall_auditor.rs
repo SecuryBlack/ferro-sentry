@@ -9,6 +9,7 @@ use serde_json::json;
 use std::process::Command;
 
 pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut findings = Vec::new();
 
     #[cfg(target_os = "linux")]
@@ -43,7 +44,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
             }
         } else if has_command("iptables") {
             // Check default INPUT policy
-            if let Ok(output) = Command::new("iptables").args(&["-L", "INPUT", "-n"]).output() {
+            if let Ok(output) = Command::new("iptables")
+                .args(&["-L", "INPUT", "-n"])
+                .output()
+            {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if stdout.contains("Chain INPUT (policy ACCEPT)") {
                     let details = json!({

@@ -6,6 +6,7 @@ use proto::security_service_client::SecurityServiceClient;
 use proto::SecurityEventRequest;
 
 pub mod proto {
+    #![allow(clippy::enum_variant_names)]
     tonic::include_proto!("securyblack.tunnel.v1");
 }
 
@@ -20,8 +21,8 @@ impl SbAgentOutput {
 #[async_trait]
 impl Output for SbAgentOutput {
     async fn send(&self, event: SecurityEvent) -> Result<()> {
-        let event_json = serde_json::to_string(&event)
-            .context("Fallo al serializar evento a JSON")?;
+        let event_json =
+            serde_json::to_string(&event).context("Fallo al serializar evento a JSON")?;
 
         tracing::debug!("Enviando evento de seguridad a sb-agent (gRPC)...");
 
@@ -30,11 +31,10 @@ impl Output for SbAgentOutput {
             .await
             .context("No se pudo conectar al agente local en 127.0.0.1:4317")?;
 
-        let request = tonic::Request::new(SecurityEventRequest {
-            event_json,
-        });
+        let request = tonic::Request::new(SecurityEventRequest { event_json });
 
-        let response = client.send_event(request)
+        let response = client
+            .send_event(request)
             .await
             .context("Error enviando evento vía gRPC al agente local")?;
 

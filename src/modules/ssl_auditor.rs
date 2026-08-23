@@ -11,6 +11,7 @@ use std::fs;
 use std::path::Path;
 
 pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut findings = Vec::new();
 
     #[cfg(target_os = "linux")]
@@ -22,7 +23,11 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_dir() {
-                        let domain = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        let domain = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
                         let cert_file = path.join("cert.pem");
                         if cert_file.is_file() {
                             // Check certificate validity / file existence

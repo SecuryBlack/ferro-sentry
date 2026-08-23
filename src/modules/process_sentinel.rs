@@ -11,6 +11,7 @@ use std::fs;
 use std::path::Path;
 
 pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut findings = Vec::new();
 
     #[cfg(target_os = "linux")]
@@ -26,7 +27,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                             let path_str = target_path.to_string_lossy().to_string();
 
                             // 1. Process running from temporary path
-                            if path_str.starts_with("/tmp") || path_str.starts_with("/var/tmp") || path_str.starts_with("/dev/shm") {
+                            if path_str.starts_with("/tmp")
+                                || path_str.starts_with("/var/tmp")
+                                || path_str.starts_with("/dev/shm")
+                            {
                                 let details = json!({
                                     "rule_id": "PROC-001",
                                     "title": "Process Executing from Temporary Directory",

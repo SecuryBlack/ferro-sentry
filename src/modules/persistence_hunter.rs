@@ -11,6 +11,7 @@ use std::fs;
 use std::path::Path;
 
 pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut findings = Vec::new();
 
     #[cfg(target_os = "linux")]
@@ -24,7 +25,12 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                     for line in content.lines() {
                         let trimmed = line.trim();
                         if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                            if trimmed.contains("/tmp") || trimmed.contains("/var/tmp") || trimmed.contains("curl ") || trimmed.contains("wget ") || trimmed.contains("python -c") {
+                            if trimmed.contains("/tmp")
+                                || trimmed.contains("/var/tmp")
+                                || trimmed.contains("curl ")
+                                || trimmed.contains("wget ")
+                                || trimmed.contains("python -c")
+                            {
                                 let details = json!({
                                     "rule_id": "PERSIST-001",
                                     "title": "Suspicious Cron Persistence Detected",
@@ -42,7 +48,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                                             Severity::High,
                                             "persistence_hunter",
                                             details,
-                                            Some(&format!("cron_suspicious_{}", trimmed.replace(['/', '\\', ' ', ':'], "_"))),
+                                            Some(&format!(
+                                                "cron_suspicious_{}",
+                                                trimmed.replace(['/', '\\', ' ', ':'], "_")
+                                            )),
                                         )
                                         .await,
                                 );
@@ -59,7 +68,11 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                                 for line in content.lines() {
                                     let trimmed = line.trim();
                                     if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                                        if trimmed.contains("/tmp") || trimmed.contains("/var/tmp") || trimmed.contains("curl ") || trimmed.contains("wget ") {
+                                        if trimmed.contains("/tmp")
+                                            || trimmed.contains("/var/tmp")
+                                            || trimmed.contains("curl ")
+                                            || trimmed.contains("wget ")
+                                        {
                                             let fpath_str = fpath.to_string_lossy().to_string();
                                             let details = json!({
                                                 "rule_id": "PERSIST-001",
@@ -78,7 +91,13 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                                                         Severity::High,
                                                         "persistence_hunter",
                                                         details,
-                                                        Some(&format!("cron_dir_suspicious_{}", trimmed.replace(['/', '\\', ' ', ':'], "_"))),
+                                                        Some(&format!(
+                                                            "cron_dir_suspicious_{}",
+                                                            trimmed.replace(
+                                                                ['/', '\\', ' ', ':'],
+                                                                "_"
+                                                            )
+                                                        )),
                                                     )
                                                     .await,
                                             );

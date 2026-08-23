@@ -11,6 +11,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut findings = Vec::new();
 
     #[cfg(target_os = "linux")]
@@ -44,7 +45,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                                             Severity::High,
                                             "permission_auditor",
                                             details,
-                                            Some(&format!("suid_temp_{}", path_str.replace(['/', '\\', ':'], "_"))),
+                                            Some(&format!(
+                                                "suid_temp_{}",
+                                                path_str.replace(['/', '\\', ':'], "_")
+                                            )),
                                         )
                                         .await,
                                 );
@@ -82,7 +86,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                                         Severity::High,
                                         "permission_auditor",
                                         details,
-                                        Some(&format!("world_writable_{}", path_str.replace(['/', '\\', ':'], "_"))),
+                                        Some(&format!(
+                                            "world_writable_{}",
+                                            path_str.replace(['/', '\\', ':'], "_")
+                                        )),
                                     )
                                     .await,
                             );

@@ -74,8 +74,8 @@ impl Config {
     /// se da si alguien lo borra a mano.
     pub fn load() -> anyhow::Result<Self> {
         let config_path = sb_agent_core::config::default_config_path("ferro-sentry");
-        let mut cfg: Config = sb_agent_core::config::load(&config_path)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let mut cfg: Config =
+            sb_agent_core::config::load(&config_path).map_err(|e| anyhow::anyhow!("{e}"))?;
 
         if let Ok(v) = env::var("FERRO_SENTRY_API_URL") {
             cfg.api_url = v;

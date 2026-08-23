@@ -4,7 +4,7 @@ mod modules;
 mod output;
 
 use engine::{EventEngine, Severity};
-use output::{sb_agent::SbAgentOutput, direct::DirectOutput, local_file::LocalFileOutput, Output};
+use output::{direct::DirectOutput, local_file::LocalFileOutput, sb_agent::SbAgentOutput, Output};
 use std::sync::Arc;
 
 async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
@@ -28,7 +28,8 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
 
     tracing::info!(mode = %cfg.mode, version = %cfg.version, log_level = %cfg.log_level, "Ferro-Sentry iniciando");
 
-    let status_handle = sb_agent_core::status::StatusHandle::new("ferro-sentry", env!("CARGO_PKG_VERSION"));
+    let status_handle =
+        sb_agent_core::status::StatusHandle::new("ferro-sentry", env!("CARGO_PKG_VERSION"));
     sb_agent_core::status::spawn_server(
         status_handle.clone(),
         sb_agent_core::status::default_socket_path("ferro-sentry"),
@@ -282,7 +283,11 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
 }
 
 fn check_version_arg() {
-    sb_agent_core::cli::dispatch_common_args("ferro-sentry", "ferro-sentry", env!("CARGO_PKG_VERSION"));
+    sb_agent_core::cli::dispatch_common_args(
+        "ferro-sentry",
+        "ferro-sentry",
+        env!("CARGO_PKG_VERSION"),
+    );
 }
 
 #[cfg(windows)]
@@ -290,7 +295,7 @@ fn main() {
     check_version_arg();
     // ERROR_FAILED_SERVICE_CONTROLLER_CONNECT (1063): process was not started
     // by the SCM, so run in console mode instead.
-    match sb_agent_core::service::windows::run_service("FerroSentry", |rx| run(rx)) {
+    match sb_agent_core::service::windows::run_service("FerroSentry", run) {
         Ok(_) => {}
         Err(e) if sb_agent_core::service::windows::is_not_started_by_scm(&e) => {
             sb_agent_core::service::run_console(run);

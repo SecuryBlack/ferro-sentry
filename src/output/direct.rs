@@ -14,7 +14,10 @@ impl DirectOutput {
     pub fn new(api_url: &str, token: &str) -> Self {
         Self {
             client: reqwest::Client::new(),
-            url: format!("{}/agents/me/security-events", api_url.trim_end_matches('/')),
+            url: format!(
+                "{}/agents/me/security-events",
+                api_url.trim_end_matches('/')
+            ),
             token: token.to_string(),
         }
     }

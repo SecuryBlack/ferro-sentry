@@ -11,6 +11,7 @@ pub struct PortInfo {
     pub port: u16,
     pub protocol: String,
     pub local_addr: String,
+    #[allow(dead_code)]
     pub state: String,
     pub pid: Option<u32>,
     pub service_name: Option<String>,
@@ -65,7 +66,12 @@ fn often_unauthenticated(port: u16) -> bool {
 fn get_listening_ports() -> Result<Vec<PortInfo>> {
     let mut results = Vec::new();
 
-    for path in &["/proc/net/tcp", "/proc/net/tcp6", "/proc/net/udp", "/proc/net/udp6"] {
+    for path in &[
+        "/proc/net/tcp",
+        "/proc/net/tcp6",
+        "/proc/net/udp",
+        "/proc/net/udp6",
+    ] {
         if !std::path::Path::new(path).exists() {
             continue;
         }
@@ -108,7 +114,11 @@ fn get_listening_ports() -> Result<Vec<PortInfo>> {
                 port,
                 protocol: proto.to_string(),
                 local_addr,
-                state: if proto == "tcp" { "LISTEN".to_string() } else { "OPEN".to_string() },
+                state: if proto == "tcp" {
+                    "LISTEN".to_string()
+                } else {
+                    "OPEN".to_string()
+                },
                 pid,
                 service_name: well_known_service(port).map(|s| s.to_string()),
             });
@@ -207,8 +217,8 @@ fn get_listening_ports() -> Result<Vec<PortInfo>> {
 // ═══════════════════════════════════════════════════════════
 fn scan_well_known_ports(target: &str) -> Vec<PortInfo> {
     let ports_to_scan = [
-        20, 21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 1433, 3306, 3389, 5432, 6379, 27017,
-        9200, 9300,
+        20, 21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 1433, 3306, 3389, 5432, 6379, 27017, 9200,
+        9300,
     ];
     let mut results = Vec::new();
 
@@ -243,8 +253,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
     let system_ports = get_listening_ports()?;
 
     for port in &system_ports {
-        let is_public = port.local_addr.starts_with("0.0.0.0") || port.local_addr.starts_with("[::]");
-        let is_localhost = port.local_addr.starts_with("127.0.0.1") || port.local_addr.starts_with("[::1]");
+        let is_public =
+            port.local_addr.starts_with("0.0.0.0") || port.local_addr.starts_with("[::]");
+        let is_localhost =
+            port.local_addr.starts_with("127.0.0.1") || port.local_addr.starts_with("[::1]");
 
         // Finding: servicio expuesto públicamente que es sensible
         if is_public && is_sensitive_service(port.port) {

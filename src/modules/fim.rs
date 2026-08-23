@@ -22,15 +22,19 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
         }
     }
 
-    let mut lock = FIM_BASELINE.lock().unwrap();
-    if lock.is_none() {
-        // First run: Establish baseline
-        tracing::info!(file_count = current_hashes.len(), "FIM baseline established");
-        *lock = Some(current_hashes);
-        return Ok(findings);
-    }
-
-    let baseline = lock.as_ref().unwrap();
+    let baseline = {
+        let mut lock = FIM_BASELINE.lock().unwrap();
+        if lock.is_none() {
+            // First run: Establish baseline
+            tracing::info!(
+                file_count = current_hashes.len(),
+                "FIM baseline established"
+            );
+            *lock = Some(current_hashes);
+            return Ok(findings);
+        }
+        lock.clone().unwrap()
+    };
 
     for (file_path, current_hash) in &current_hashes {
         if let Some(expected_hash) = baseline.get(file_path) {
@@ -53,7 +57,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                             Severity::High,
                             "fim",
                             details,
-                            Some(&format!("fim_modified_{}", file_path.replace(['/', '\\', ':'], "_"))),
+                            Some(&format!(
+                                "fim_modified_{}",
+                                file_path.replace(['/', '\\', ':'], "_")
+                            )),
                         )
                         .await,
                 );
@@ -62,7 +69,7 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
     }
 
     // Update baseline to prevent alert storm on single modification
-    *lock = Some(current_hashes);
+    *FIM_BASELINE.lock().unwrap() = Some(current_hashes);
 
     Ok(findings)
 }

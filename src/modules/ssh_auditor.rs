@@ -73,7 +73,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
     }
 
     // Rule 3: SSH Standard Port 22
-    let port_val = parsed_config.get("port").map(|s| s.as_str()).unwrap_or("22");
+    let port_val = parsed_config
+        .get("port")
+        .map(|s| s.as_str())
+        .unwrap_or("22");
     if port_val == "22" {
         let details = json!({
             "rule_id": "SSH-003",
@@ -127,9 +130,13 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
     }
 
     // Rule 5: MaxAuthTries
-    let max_tries: Option<u32> = parsed_config.get("maxauthtries").and_then(|v| v.parse().ok());
+    let max_tries: Option<u32> = parsed_config
+        .get("maxauthtries")
+        .and_then(|v| v.parse().ok());
     if max_tries.unwrap_or(6) > 4 {
-        let current_str = max_tries.map(|v| v.to_string()).unwrap_or_else(|| "Default (6)".to_string());
+        let current_str = max_tries
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "Default (6)".to_string());
         let details = json!({
             "rule_id": "SSH-005",
             "title": "SSH Max Authentication Tries Excessive",
@@ -176,7 +183,7 @@ fn find_sshd_configs() -> Vec<String> {
         if let Ok(entries) = fs::read_dir("/etc/ssh/sshd_config.d") {
             for entry in entries.flatten() {
                 let p = entry.path();
-                if p.is_file() && p.extension().map_or(false, |ext| ext == "conf") {
+                if p.is_file() && p.extension().is_some_and(|ext| ext == "conf") {
                     if let Some(p_str) = p.to_str() {
                         files.push(p_str.to_string());
                     }
