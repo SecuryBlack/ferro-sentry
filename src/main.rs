@@ -7,53 +7,27 @@ use anyhow::Result;
 use engine::{EventEngine, Severity};
 use output::{sb_agent::SbAgentOutput, direct::DirectOutput, local_file::LocalFileOutput, Output};
 use std::sync::Arc;
-use tracing_subscriber::EnvFilter;
-
-#[cfg(windows)]
-fn init_logging(log_level: &str) {
-    let log_dir = r"C:\ProgramData\ferro-sentry";
-    let write_test_path = format!(r"{}\.write_test", log_dir);
-
-    let use_stdout = std::env::var("FERRO_SENTRY_LOG_STDOUT").is_ok()
-        || std::fs::create_dir_all(log_dir).is_err()
-        || std::fs::write(&write_test_path, "").is_err();
-
-    let _ = std::fs::remove_file(&write_test_path);
-
-    if use_stdout {
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::new(log_level))
-            .init();
-    } else {
-        let file_appender = tracing_appender::rolling::daily(log_dir, "ferro-sentry.log");
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::new(log_level))
-            .with_writer(file_appender)
-            .with_ansi(false)
-            .init();
-    }
-}
-
-#[cfg(not(windows))]
-fn init_logging(log_level: &str) {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new(log_level))
-        .init();
-}
 
 async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
-    // Inicializar logging primero para registrar cualquier posible error de inicio/configuración
-    init_logging("info");
-
+    // Config se carga antes que logging (al revés que antes) porque
+    // cfg.log_level ahora sí se usa de verdad como nivel por defecto —
+    // previamente init_logging("info") se llamaba primero con un nivel fijo
+    // y log_level se cargaba después sin aplicarse nunca a nada.
     let cfg = match config::Config::load() {
         Ok(c) => c,
         Err(e) => {
-            tracing::error!("Fallo al cargar la configuración: {}", e);
+            eprintln!("[ferro-sentry] Fallo al cargar la configuración: {}", e);
             std::process::exit(1);
         }
     };
 
-    tracing::info!(mode = %cfg.mode, version = %cfg.version, "Ferro-Sentry iniciando");
+    let log_dir = sb_agent_core::config::default_config_path("ferro-sentry")
+        .parent()
+        .expect("config path always has a parent")
+        .to_path_buf();
+    sb_agent_core::logging::init("ferro-sentry", &log_dir, &cfg.log_level);
+
+    tracing::info!(mode = %cfg.mode, version = %cfg.version, log_level = %cfg.log_level, "Ferro-Sentry iniciando");
 
     // Iniciar chequeo diario de actualizaciones en segundo plano.
     // Mismo STARTUP_DELAY (60s) que ya tenía FerroSentry — coincide con
