@@ -37,8 +37,25 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
     );
     status_handle.set_state("running");
 
+    // Compartido con `management::commands`: `allow_remote_os_upgrade` deja
+    // de ser un valor capturado una sola vez al arrancar — `os_upgrade` lo
+    // relee en cada ejecución, así que el comando
+    // `set_allow_remote_os_upgrade` puede cambiarlo en caliente sin
+    // necesitar reiniciar el proceso. `last_scan_unix` viaja igual para que
+    // ambos puntos que tocan el status socket puedan republicar el JSON
+    // completo (`set_details` reemplaza, no hace merge) sin pisarse el uno
+    // al otro.
+    let allow_remote_os_upgrade = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.allow_remote_os_upgrade));
+    let last_scan_unix = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    management::commands::publish_status_details(&status_handle, &allow_remote_os_upgrade, &last_scan_unix);
+
     let command_registry = sb_agent_core::command_intake::CommandRegistry::new();
-    management::commands::register(&command_registry, cfg.allow_remote_os_upgrade);
+    management::commands::register(
+        &command_registry,
+        allow_remote_os_upgrade.clone(),
+        status_handle.clone(),
+        last_scan_unix.clone(),
+    );
     sb_agent_core::command_intake::spawn_server(
         command_registry,
         sb_agent_core::command_intake::default_socket_path("ferro-sentry"),
@@ -274,12 +291,14 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
                 }
 
                 tracing::info!("Escaneos de seguridad completados exitosamente");
-                status_handle.set_details(serde_json::json!({
-                    "last_scan_unix": std::time::SystemTime::now()
+                last_scan_unix.store(
+                    std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_secs())
                         .unwrap_or(0),
-                }));
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                management::commands::publish_status_details(&status_handle, &allow_remote_os_upgrade, &last_scan_unix);
             }
             _ = &mut shutdown => {
                 tracing::info!("Señal de apagado recibida, deteniendo Ferro-Sentry");

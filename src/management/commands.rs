@@ -1,4 +1,5 @@
-//! Handlers registrados en el intake de comandos. Hoy solo `os_upgrade`.
+//! Handlers registrados en el intake de comandos: `os_upgrade` y
+//! `set_allow_remote_os_upgrade`.
 //!
 //! Decisiones de producto ya cerradas (ver documento de diseño) que este
 //! código respeta:
@@ -10,16 +11,86 @@
 //!   y se informa en el resultado, no se ejecuta.
 //! - Consentimiento del cliente: `allow_remote_os_upgrade` en config.toml,
 //!   `false` por defecto — independiente de que la nube ofrezca el botón.
+//!   Antes solo se podía cambiar a mano por SSH; `set_allow_remote_os_upgrade`
+//!   deja que el propio dueño del servidor lo active/desactive desde la app,
+//!   sin dejar de vivir en su config.toml (la nube nunca lo activa por su
+//!   cuenta — solo reenvía lo que el dueño pide).
 
 use sb_agent_core::command_intake::{CommandOutcome, CommandRegistry, ProgressSender};
+use sb_agent_core::status::StatusHandle;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+
+/// Reconstruye el `details` del status socket a partir del estado
+/// compartido. `set_details` reemplaza el JSON entero (no hace merge), así
+/// que cualquier sitio que quiera tocar un campo tiene que pasar por aquí
+/// para no pisar el otro.
+pub fn publish_status_details(status_handle: &StatusHandle, allow_remote_os_upgrade: &AtomicBool, last_scan_unix: &AtomicU64) {
+    status_handle.set_details(serde_json::json!({
+        "last_scan_unix": last_scan_unix.load(Ordering::Relaxed),
+        "allow_remote_os_upgrade": allow_remote_os_upgrade.load(Ordering::Relaxed),
+    }));
+}
 
 /// Registra todos los handlers de FerroSentry en el intake de comandos.
-/// `allow_remote_os_upgrade` viene de `Config` y se captura una vez al
-/// arrancar — como el resto del proceso, se relee reiniciando el agente.
-pub fn register(registry: &CommandRegistry, allow_remote_os_upgrade: bool) {
+/// `allow_remote_os_upgrade` es compartido (no capturado por valor una sola
+/// vez): `set_allow_remote_os_upgrade` lo actualiza en caliente, sin
+/// necesidad de reiniciar el proceso para que `os_upgrade` vea el cambio.
+pub fn register(
+    registry: &CommandRegistry,
+    allow_remote_os_upgrade: Arc<AtomicBool>,
+    status_handle: StatusHandle,
+    last_scan_unix: Arc<AtomicU64>,
+) {
+    let os_upgrade_flag = allow_remote_os_upgrade.clone();
     registry.register("os_upgrade", move |payload, progress| {
-        os_upgrade::handle(payload, progress, allow_remote_os_upgrade)
+        os_upgrade::handle(payload, progress, os_upgrade_flag.clone())
     });
+
+    registry.register("set_allow_remote_os_upgrade", move |payload, _progress| {
+        let flag = allow_remote_os_upgrade.clone();
+        let status_handle = status_handle.clone();
+        let last_scan_unix = last_scan_unix.clone();
+        async move { set_config::handle_set_allow_remote_os_upgrade(payload, flag, status_handle, last_scan_unix).await }
+    });
+}
+
+mod set_config {
+    use super::*;
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    struct Payload {
+        enabled: bool,
+    }
+
+    /// Escribe `allow_remote_os_upgrade` en `config.toml` (vía
+    /// `sync_bool_field`, no a mano — eso fue justo lo que rompió el
+    /// servicio en producción una vez), actualiza el flag en memoria que
+    /// `os_upgrade` consulta, y republica el status socket para que la app
+    /// no tenga que asumir que el comando funcionó — puede releer el estado
+    /// real.
+    pub async fn handle_set_allow_remote_os_upgrade(
+        payload: serde_json::Value,
+        flag: Arc<AtomicBool>,
+        status_handle: StatusHandle,
+        last_scan_unix: Arc<AtomicU64>,
+    ) -> CommandOutcome {
+        let request: Payload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        let config_path = sb_agent_core::config::default_config_path("ferro-sentry");
+        if let Err(e) = sb_agent_core::config::sync_bool_field(&config_path, "allow_remote_os_upgrade", request.enabled) {
+            return CommandOutcome::failed(format!("could not write config.toml: {e}"));
+        }
+
+        flag.store(request.enabled, Ordering::Relaxed);
+        publish_status_details(&status_handle, &flag, &last_scan_unix);
+
+        CommandOutcome::ok(serde_json::json!({ "allow_remote_os_upgrade": request.enabled }).to_string())
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -43,12 +114,8 @@ mod os_upgrade {
         "security_only".to_string()
     }
 
-    pub async fn handle(
-        payload: serde_json::Value,
-        progress: ProgressSender,
-        allow_remote_os_upgrade: bool,
-    ) -> CommandOutcome {
-        if !allow_remote_os_upgrade {
+    pub async fn handle(payload: serde_json::Value, progress: ProgressSender, allow_remote_os_upgrade: Arc<AtomicBool>) -> CommandOutcome {
+        if !allow_remote_os_upgrade.load(Ordering::Relaxed) {
             return CommandOutcome::failed(
                 "os_upgrade rejected: allow_remote_os_upgrade is disabled in this agent's config.toml",
             );
@@ -194,11 +261,7 @@ mod os_upgrade {
 mod os_upgrade {
     use super::*;
 
-    pub async fn handle(
-        _payload: serde_json::Value,
-        _progress: ProgressSender,
-        _allow_remote_os_upgrade: bool,
-    ) -> CommandOutcome {
+    pub async fn handle(_payload: serde_json::Value, _progress: ProgressSender, _allow_remote_os_upgrade: Arc<AtomicBool>) -> CommandOutcome {
         CommandOutcome::failed("os_upgrade is not implemented on this platform yet")
     }
 }

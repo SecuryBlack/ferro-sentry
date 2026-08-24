@@ -40,5 +40,5 @@ strip = true
 # sin publicar a crates.io. Quitar en cuanto se publique una versión del
 # crate que lo incluya.
 [patch.crates-io]
-sb-agent-core = { git = "https://github.com/SecuryBlack/sb-agent-core.git", rev = "ed48bcc" }
+sb-agent-core = { git = "https://github.com/SecuryBlack/sb-agent-core.git", rev = "8730183" }
 
