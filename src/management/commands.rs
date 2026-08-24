@@ -53,6 +53,8 @@ pub fn register(
         let last_scan_unix = last_scan_unix.clone();
         async move { set_config::handle_set_allow_remote_os_upgrade(payload, flag, status_handle, last_scan_unix).await }
     });
+
+    registry.register("sync_direct_token", move |payload, _progress| async move { set_config::handle_sync_direct_token(payload).await });
 }
 
 mod set_config {
@@ -90,6 +92,62 @@ mod set_config {
         publish_status_details(&status_handle, &flag, &last_scan_unix);
 
         CommandOutcome::ok(serde_json::json!({ "allow_remote_os_upgrade": request.enabled }).to_string())
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TokenPayload {
+        token: String,
+    }
+
+    /// Se dispara cuando la nube regenera `servers.token` (p.ej. al reanudar
+    /// una instalación desde la app): sin esto, el `token` guardado en
+    /// `config.toml` se queda desincronizado con la base de datos y
+    /// `DirectOutput` empieza a fallar con 401 en todas sus llamadas, en
+    /// silencio (no hay reintento con backoff que lo saque a superficie, y
+    /// el buffering de `tracing` puede tapar el aviso en journalctl). Llega
+    /// por el túnel de comandos, que usa una autenticación distinta a
+    /// `servers.token` — así que sigue funcionando aunque el token directo ya
+    /// esté roto.
+    ///
+    /// Reinicia el servicio tras escribir el fichero en vez de intentar una
+    /// actualización en caliente del cliente HTTP: `DirectOutput` ya está
+    /// construido con el token viejo capturado por valor, y no vale la pena
+    /// duplicar el patrón de estado compartido que usa
+    /// `allow_remote_os_upgrade` solo para esto. El propio `systemctl
+    /// restart` no se lanza hasta pasado un margen, igual que el reinicio de
+    /// SO en `os_upgrade`, para dar tiempo a que la respuesta de este
+    /// comando salga por el intake antes de que el reinicio corte la
+    /// conexión.
+    pub async fn handle_sync_direct_token(payload: serde_json::Value) -> CommandOutcome {
+        let request: TokenPayload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        if request.token.trim().is_empty() {
+            return CommandOutcome::failed("token must not be empty");
+        }
+
+        let config_path = sb_agent_core::config::default_config_path("ferro-sentry");
+        if let Err(e) = sb_agent_core::config::sync_string_field(&config_path, "token", &request.token) {
+            return CommandOutcome::failed(format!("could not write config.toml: {e}"));
+        }
+
+        schedule_restart();
+
+        CommandOutcome::ok(serde_json::json!({ "restarting": true }).to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn schedule_restart() {
+        let _ = std::process::Command::new("sh")
+            .args(["-c", "sleep 2 && systemctl restart ferro-sentry"])
+            .spawn();
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn schedule_restart() {
+        tracing::warn!("sync_direct_token: config.toml actualizado, pero el reinicio automático solo está implementado en Linux — reinicia el servicio a mano");
     }
 }
 
