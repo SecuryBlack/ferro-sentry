@@ -96,6 +96,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                     )
                     .await,
             );
+            // El reinicio pendiente ya va dentro de los `details` de arriba
+            // — si antes había un hallazgo `reboot_required` suelto (sin
+            // updates pendientes), ya no aplica como hallazgo aparte.
+            findings.push(engine.build_resolved_event("vuln_scanner", "reboot_required").await);
         } else if !reboot_required.is_empty() {
             // Sin updates pendientes pero con un reinicio ya pedido por una
             // instalación anterior (p.ej. unattended-upgrades) — igual de
@@ -122,6 +126,15 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                     )
                     .await,
             );
+            findings.push(engine.build_resolved_event("vuln_scanner", "pending_os_updates").await);
+        } else {
+            // Nada pendiente y sin reinicio a medias — resolver los dos
+            // explícitamente. Sin esto, un hallazgo abierto se queda huérfano
+            // para siempre en cuanto la condición que lo causó desaparece:
+            // este módulo solo emite un evento cuando hay algo que reportar,
+            // así que nadie más le dice a `api-internal` que ya no aplica.
+            findings.push(engine.build_resolved_event("vuln_scanner", "pending_os_updates").await);
+            findings.push(engine.build_resolved_event("vuln_scanner", "reboot_required").await);
         }
     }
 

@@ -112,4 +112,18 @@ impl EventEngine {
             rule_triggered: rule.map(|s| s.to_string()),
         }
     }
+
+    /// Señala que una regla que antes disparaba un hallazgo ya no aplica
+    /// (p.ej. `pending_os_updates` cuando `total_updates` vuelve a 0).
+    ///
+    /// Sin esto, un módulo nunca vuelve a mandar nada para esa regla en
+    /// cuanto la condición desaparece — no hay ningún evento que decirle a
+    /// `api-internal` "esto ya no está pasando", así que el hallazgo activo
+    /// se queda huérfano en la base de datos para siempre, mostrando datos
+    /// de hace semanas aunque el estado real ya haya cambiado. `event_type:
+    /// "resolved"` le dice al backend que cierre el hallazgo abierto para
+    /// (module, rule) en vez de crear/actualizar uno.
+    pub async fn build_resolved_event(&self, module: &str, rule: &str) -> SecurityEvent {
+        self.build_event("resolved", "posture", Severity::Info, module, serde_json::json!({}), Some(rule)).await
+    }
 }
