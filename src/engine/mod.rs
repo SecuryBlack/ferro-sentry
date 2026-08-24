@@ -28,13 +28,27 @@ pub struct SecurityEvent {
 
 impl SecurityEvent {
     pub fn signature(&self) -> String {
-        // Firma simple para deduplicación
+        // Firma simple para deduplicación. Para reglas donde el conteo en
+        // `details` es el dato relevante (no solo si el hallazgo existe),
+        // se incluye en la firma — si no, un cambio de 3 a 30 paquetes
+        // pendientes se descartaría como duplicado del primer reporte.
+        let extra = match self.rule_triggered.as_deref() {
+            Some("pending_os_updates") | Some("reboot_required") => format!(
+                ":{}:{}:{}",
+                self.details.get("total_updates").and_then(|v| v.as_u64()).unwrap_or(0),
+                self.details.get("security_updates").and_then(|v| v.as_u64()).unwrap_or(0),
+                self.details.get("reboot_required").and_then(|v| v.as_bool()).unwrap_or(false),
+            ),
+            _ => String::new(),
+        };
+
         format!(
-            "{}:{}:{}:{}",
+            "{}:{}:{}:{}{}",
             self.event_type,
             self.module,
             self.host,
-            self.rule_triggered.as_deref().unwrap_or("none")
+            self.rule_triggered.as_deref().unwrap_or("none"),
+            extra
         )
     }
 }

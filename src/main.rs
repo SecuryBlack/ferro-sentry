@@ -1,5 +1,6 @@
 mod config;
 mod engine;
+mod management;
 mod modules;
 mod output;
 
@@ -35,6 +36,13 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
         sb_agent_core::status::default_socket_path("ferro-sentry"),
     );
     status_handle.set_state("running");
+
+    let command_registry = sb_agent_core::command_intake::CommandRegistry::new();
+    management::commands::register(&command_registry, cfg.allow_remote_os_upgrade);
+    sb_agent_core::command_intake::spawn_server(
+        command_registry,
+        sb_agent_core::command_intake::default_socket_path("ferro-sentry"),
+    );
 
     // Iniciar chequeo diario de actualizaciones en segundo plano.
     // Mismo STARTUP_DELAY (60s) que ya tenía FerroSentry — coincide con

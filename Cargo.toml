@@ -35,3 +35,10 @@ opt-level = 3
 lto = true
 strip = true
 
+# TEMPORAL: mismo motivo que en nexus-agent/Cargo.toml — el intake de
+# comandos (`command_intake`) solo está en GitHub todavía (commit 8a342a9),
+# sin publicar a crates.io. Quitar en cuanto se publique una versión del
+# crate que lo incluya.
+[patch.crates-io]
+sb-agent-core = { git = "https://github.com/SecuryBlack/sb-agent-core.git", rev = "8a342a9" }
+

@@ -2,7 +2,7 @@
 
 Agente de seguridad de servidor (EDR + Postura + Visibilidad) escrito en Rust. Corre dentro del servidor, detecta amenazas en tiempo real, audita la postura de seguridad y reporta a SecuryBlack Cloud.
 
-> **Estado:** En producción — 9 módulos de auditoría funcionando (Fase 1 completa, partes de Fase 2 y 3). Solo lectura: audita e informa, no reconfigura nada. El resto del roadmap (EDR en tiempo real, hardening, respuesta automática) sigue en desarrollo activo.
+> **Estado:** En producción — 9 módulos de auditoría funcionando (Fase 1 completa, partes de Fase 2 y 3). **Ya no es solo lectura** desde 2026-08-24: el intake de comandos permite remediación explícita (`os_upgrade`, opt-in vía `allow_remote_os_upgrade` en `config.toml`), primer paso de la Fase 3 de Hardening. El resto del roadmap (EDR en tiempo real, más hardening, respuesta automática) sigue en desarrollo activo.
 
 ---
 
@@ -247,7 +247,18 @@ ferro-sentry/
 - [ ] **Log Watcher** — Tail de logs con reglas regex.
 
 ### Fase 3 — Postura y Hardening
-- [x] **Vulnerability Scanner** — Versiones vs CVEs, parches pendientes.
+- [x] **Vulnerability Scanner** — Versiones vs CVEs, parches pendientes. Detección endurecida
+      2026-08-24: origen real de seguridad (no substring del nombre del paquete), `dist-upgrade`
+      en vez de `upgrade` para no subestimar el total, reboot-required, edad de caché de apt.
+- [x] **Remediación `os_upgrade`** — Hecho 2026-08-24: `management/commands.rs`, handler
+      registrado en el intake de comandos (`sb_agent_core::command_intake`, ver
+      `D:\infra\docs\design-command-intake.md`). Solo Linux/apt por ahora (dnf/yum
+      responden "not implemented"). `mode: "security_only"|"all"`, reinicio nunca automático
+      salvo `allow_reboot: true` explícito en el comando, y sujeto siempre a
+      `allow_remote_os_upgrade` en `config.toml` (`false` por defecto — opt-in del cliente,
+      independiente de que la nube lo ofrezca). Funciona igual si el intake lo dispara nexus
+      (reenviado desde el túnel) o un llamante local — es la pieza que hace que FerroSentry
+      pueda remediar sin nube, no solo detectar.
 - [ ] **Secrets Hunter** — API keys, credenciales en config.
 - [ ] **Kernel Security** — ASLR, SELinux/AppArmor, seccomp.
 - [x] **Persistence Hunter** — Cron, systemd, startup.

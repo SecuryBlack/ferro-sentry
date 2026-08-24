@@ -28,6 +28,15 @@ pub struct Config {
     /// Nivel de log: trace, debug, info, warn, error
     #[serde(default = "default_log_level")]
     pub log_level: String,
+
+    /// Consentimiento explícito del cliente para que un `os_upgrade` pedido
+    /// desde SB se ejecute en este servidor. `false` por defecto — que la
+    /// nube ofrezca la acción no basta, el dueño del servidor tiene que
+    /// haberlo habilitado aquí. Independiente de la autorización del lado
+    /// de la nube (que ya limita quién puede pedirlo a sus propios
+    /// servidores) — ver `D:\infra\docs\design-command-intake.md`.
+    #[serde(default)]
+    pub allow_remote_os_upgrade: bool,
 }
 
 impl Default for Config {
@@ -39,6 +48,7 @@ impl Default for Config {
             mode: default_mode(),
             local_file_path: default_local_path(),
             log_level: default_log_level(),
+            allow_remote_os_upgrade: false,
         }
     }
 }
@@ -91,6 +101,9 @@ impl Config {
         }
         if let Ok(v) = env::var("FERRO_SENTRY_LOG_LEVEL") {
             cfg.log_level = v;
+        }
+        if let Ok(v) = env::var("FERRO_SENTRY_ALLOW_REMOTE_OS_UPGRADE") {
+            cfg.allow_remote_os_upgrade = v == "true" || v == "1";
         }
 
         cfg.version = env!("CARGO_PKG_VERSION").to_string();
