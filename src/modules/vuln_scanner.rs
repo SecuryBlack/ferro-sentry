@@ -52,6 +52,26 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                 Severity::Medium
             };
 
+            // Solo apt sabe listar paquete-a-paquete hoy (`dnf`/`yum` solo
+            // cuentan líneas de `check-update`, que no tienen la misma forma
+            // parseable) — el mismo alcance que ya tenía `os_upgrade`, que
+            // tampoco actúa fuera de apt.
+            let packages: Vec<serde_json::Value> = if package_manager == "apt" {
+                parse_apt_packages(&raw_output)
+                    .into_iter()
+                    .map(|p| {
+                        json!({
+                            "name": p.name,
+                            "current_version": p.current_version,
+                            "new_version": p.new_version,
+                            "security": p.security,
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
             let details = json!({
                 "package_manager": package_manager,
                 "total_updates": total_updates,
@@ -60,6 +80,7 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                 "reboot_required_packages": reboot_required,
                 "cache_age_secs": cache_age_secs,
                 "summary": format!("Found {} pending updates ({} security-related)", total_updates, security_updates),
+                "packages": packages,
                 "raw_output_snippet": raw_output.lines().take(20).collect::<Vec<&str>>().join("\n")
             });
 
@@ -185,6 +206,43 @@ fn is_security_pocket(line: &str) -> bool {
         Some(idx) => line[idx..].to_ascii_lowercase().contains("security"),
         None => false,
     }
+}
+
+/// Una fila parseada de `apt-get -s dist-upgrade`, para que la UI pueda
+/// listar qué va a cambiar en vez de solo un conteo.
+#[cfg(target_os = "linux")]
+pub(crate) struct PackageUpdate {
+    pub name: String,
+    /// `None` cuando el paquete no tenía versión previa instalada en el
+    /// simulacro (p.ej. una dependencia nueva que arrastra `dist-upgrade`).
+    pub current_version: Option<String>,
+    pub new_version: Option<String>,
+    pub security: bool,
+}
+
+/// Parsea todas las líneas `Inst` de una simulación de `apt-get -s
+/// dist-upgrade` a `PackageUpdate`. Forma de la línea:
+/// `Inst libssl1.1 [1.1.1f-1ubuntu2] (1.1.1f-1ubuntu2.16 Ubuntu:20.04/focal-security [amd64])`
+/// — el corchete con la versión actual es opcional (no aparece si el
+/// paquete no estaba instalado antes, p.ej. una dependencia nueva).
+#[cfg(target_os = "linux")]
+fn parse_apt_packages(stdout: &str) -> Vec<PackageUpdate> {
+    stdout
+        .lines()
+        .filter(|line| line.starts_with("Inst "))
+        .filter_map(|line| {
+            let rest = line.strip_prefix("Inst ")?;
+            let name = rest.split_whitespace().next()?.to_string();
+
+            let current_version = rest.find('[').and_then(|start| {
+                rest[start + 1..].find(']').map(|len| rest[start + 1..start + 1 + len].to_string())
+            });
+
+            let new_version = rest.find('(').and_then(|start| rest[start + 1..].split_whitespace().next().map(str::to_string));
+
+            Some(PackageUpdate { name, current_version, new_version, security: is_security_pocket(line) })
+        })
+        .collect()
 }
 
 /// Nombres de los paquetes con actualización pendiente por el pocket de
