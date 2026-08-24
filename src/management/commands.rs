@@ -55,6 +55,41 @@ pub fn register(
     });
 
     registry.register("sync_direct_token", move |payload, _progress| async move { set_config::handle_sync_direct_token(payload).await });
+
+    registry.register("update_now", move |_payload, _progress| async move { update_now::handle().await });
+}
+
+mod update_now {
+    use super::*;
+
+    /// Dispara `sb_agent_core::updater::check_now` de inmediato en vez de
+    /// esperar al chequeo diario — para el botón "Actualizar" de la app.
+    /// Misma política de reinicio que el loop de fondo: si hay actualización,
+    /// el binario ya quedó reemplazado en disco por `self_update`, así que
+    /// hay que salir para que el gestor de servicios (systemd/SCM,
+    /// `Restart=always`) relance el proceso con el nuevo binario — el exit se
+    /// retrasa un momento para que esta misma respuesta salga por el intake
+    /// antes de que el reinicio corte la conexión.
+    pub async fn handle() -> CommandOutcome {
+        let cfg = sb_agent_core::updater::UpdaterConfig::new("securyblack", "ferro-sentry", "ferro-sentry", env!("CARGO_PKG_VERSION"));
+
+        let result = tokio::task::spawn_blocking(move || sb_agent_core::updater::check_now(&cfg)).await;
+
+        match result {
+            Ok(Ok(true)) => {
+                std::thread::spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    std::process::exit(0);
+                });
+                CommandOutcome::ok(serde_json::json!({ "updated": true, "previous_version": env!("CARGO_PKG_VERSION") }).to_string())
+            }
+            Ok(Ok(false)) => CommandOutcome::ok(
+                serde_json::json!({ "updated": false, "current_version": env!("CARGO_PKG_VERSION") }).to_string(),
+            ),
+            Ok(Err(e)) => CommandOutcome::failed(format!("update check failed: {e}")),
+            Err(e) => CommandOutcome::failed(format!("update task panicked: {e}")),
+        }
+    }
 }
 
 mod set_config {

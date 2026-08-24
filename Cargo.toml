@@ -1,6 +1,6 @@
 [package]
 name = "ferro-sentry"
-version = "0.2.9"
+version = "0.2.10"
 edition = "2021"
 license = "Apache-2.0"
 description = "SecuryBlack server security agent (EDR + posture)"
@@ -40,5 +40,5 @@ strip = true
 # sin publicar a crates.io. Quitar en cuanto se publique una versión del
 # crate que lo incluya.
 [patch.crates-io]
-sb-agent-core = { git = "https://github.com/SecuryBlack/sb-agent-core.git", rev = "ba16b24" }
+sb-agent-core = { git = "https://github.com/SecuryBlack/sb-agent-core.git", rev = "a1036c0" }
 
