@@ -41,9 +41,44 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
         }
     }
 
+    // Unattended-upgrades solo existe como concepto en el mundo apt
+    // (Debian/Ubuntu) — dnf-automatic/yum-cron son el equivalente en
+    // RHEL-likes pero no se comprueban todavía, mismo alcance que el resto
+    // de este módulo.
+    if package_manager == "apt" {
+        if unattended_upgrades_configured() {
+            findings.push(
+                engine
+                    .build_resolved_event("vuln_scanner", "unattended_upgrades_not_configured")
+                    .await,
+            );
+        } else {
+            let details = json!({
+                "rule_id": "VULN-001",
+                "title": "Unattended Security Upgrades Not Configured",
+                "summary": "The unattended-upgrades package is missing or disabled — security patches are not applied automatically between manual maintenance windows.",
+                "remediation": "Install and enable it: 'apt install unattended-upgrades' then ensure 'APT::Periodic::Unattended-Upgrade \"1\";' is set in /etc/apt/apt.conf.d/20auto-upgrades."
+            });
+            findings.push(
+                engine
+                    .build_event(
+                        "finding",
+                        "posture",
+                        Severity::Medium,
+                        "vuln_scanner",
+                        details,
+                        Some("unattended_upgrades_not_configured"),
+                    )
+                    .await,
+            );
+        }
+    }
+
     if package_manager != "unknown" {
         let reboot_required = reboot_required_packages();
-        let cache_age_secs = (package_manager == "apt").then(apt_cache_age_secs).flatten();
+        let cache_age_secs = (package_manager == "apt")
+            .then(apt_cache_age_secs)
+            .flatten();
 
         if total_updates > 0 {
             let severity = if security_updates > 0 {
@@ -99,7 +134,11 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
             // El reinicio pendiente ya va dentro de los `details` de arriba
             // — si antes había un hallazgo `reboot_required` suelto (sin
             // updates pendientes), ya no aplica como hallazgo aparte.
-            findings.push(engine.build_resolved_event("vuln_scanner", "reboot_required").await);
+            findings.push(
+                engine
+                    .build_resolved_event("vuln_scanner", "reboot_required")
+                    .await,
+            );
         } else if !reboot_required.is_empty() {
             // Sin updates pendientes pero con un reinicio ya pedido por una
             // instalación anterior (p.ej. unattended-upgrades) — igual de
@@ -126,15 +165,27 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                     )
                     .await,
             );
-            findings.push(engine.build_resolved_event("vuln_scanner", "pending_os_updates").await);
+            findings.push(
+                engine
+                    .build_resolved_event("vuln_scanner", "pending_os_updates")
+                    .await,
+            );
         } else {
             // Nada pendiente y sin reinicio a medias — resolver los dos
             // explícitamente. Sin esto, un hallazgo abierto se queda huérfano
             // para siempre en cuanto la condición que lo causó desaparece:
             // este módulo solo emite un evento cuando hay algo que reportar,
             // así que nadie más le dice a `api-internal` que ya no aplica.
-            findings.push(engine.build_resolved_event("vuln_scanner", "pending_os_updates").await);
-            findings.push(engine.build_resolved_event("vuln_scanner", "reboot_required").await);
+            findings.push(
+                engine
+                    .build_resolved_event("vuln_scanner", "pending_os_updates")
+                    .await,
+            );
+            findings.push(
+                engine
+                    .build_resolved_event("vuln_scanner", "reboot_required")
+                    .await,
+            );
         }
     }
 
@@ -156,6 +207,20 @@ pub(crate) fn reboot_required_packages() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// `unattended-upgrades` se considera configurado cuando el paquete está
+/// instalado y `APT::Periodic::Unattended-Upgrade` vale "1" en su fichero de
+/// configuración habitual — leer el paquete instalado sin más no basta,
+/// puede estar presente pero desactivado tras un `dpkg-reconfigure` manual.
+#[cfg(target_os = "linux")]
+fn unattended_upgrades_configured() -> bool {
+    let Ok(content) = std::fs::read_to_string("/etc/apt/apt.conf.d/20auto-upgrades") else {
+        return false;
+    };
+    content
+        .lines()
+        .any(|l| l.contains("APT::Periodic::Unattended-Upgrade") && l.contains('1'))
+}
+
 /// Antigüedad de la caché de `apt` en segundos, vía el mismo stamp que usa
 /// `apt`/`unattended-upgrades` para saber cuándo se corrió `apt-get update`
 /// por última vez con éxito. `None` si el stamp no existe todavía (sistema
@@ -164,7 +229,10 @@ pub(crate) fn reboot_required_packages() -> Vec<String> {
 fn apt_cache_age_secs() -> Option<u64> {
     let stamp = std::fs::metadata("/var/lib/apt/periodic/update-success-stamp").ok()?;
     let modified = stamp.modified().ok()?;
-    std::time::SystemTime::now().duration_since(modified).ok().map(|d| d.as_secs())
+    std::time::SystemTime::now()
+        .duration_since(modified)
+        .ok()
+        .map(|d| d.as_secs())
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -248,12 +316,24 @@ fn parse_apt_packages(stdout: &str) -> Vec<PackageUpdate> {
             let name = rest.split_whitespace().next()?.to_string();
 
             let current_version = rest.find('[').and_then(|start| {
-                rest[start + 1..].find(']').map(|len| rest[start + 1..start + 1 + len].to_string())
+                rest[start + 1..]
+                    .find(']')
+                    .map(|len| rest[start + 1..start + 1 + len].to_string())
             });
 
-            let new_version = rest.find('(').and_then(|start| rest[start + 1..].split_whitespace().next().map(str::to_string));
+            let new_version = rest.find('(').and_then(|start| {
+                rest[start + 1..]
+                    .split_whitespace()
+                    .next()
+                    .map(str::to_string)
+            });
 
-            Some(PackageUpdate { name, current_version, new_version, security: is_security_pocket(line) })
+            Some(PackageUpdate {
+                name,
+                current_version,
+                new_version,
+                security: is_security_pocket(line),
+            })
         })
         .collect()
 }
@@ -266,7 +346,10 @@ fn parse_apt_packages(stdout: &str) -> Vec<PackageUpdate> {
 /// las distros por igual.
 #[cfg(target_os = "linux")]
 pub(crate) fn list_security_package_names() -> Result<Vec<String>> {
-    let output = Command::new("apt-get").args(&["-s", "dist-upgrade"]).env("LANG", "C").output()?;
+    let output = Command::new("apt-get")
+        .args(&["-s", "dist-upgrade"])
+        .env("LANG", "C")
+        .output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let names = stdout

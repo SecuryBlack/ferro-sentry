@@ -1,5 +1,7 @@
+pub mod auth_monitor;
 pub mod fim;
 pub mod firewall_auditor;
+pub mod intrusion_prevention_auditor;
 pub mod permission_auditor;
 pub mod persistence_hunter;
 pub mod port_scanner;

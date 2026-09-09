@@ -45,9 +45,15 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
     // ambos puntos que tocan el status socket puedan republicar el JSON
     // completo (`set_details` reemplaza, no hace merge) sin pisarse el uno
     // al otro.
-    let allow_remote_os_upgrade = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.allow_remote_os_upgrade));
+    let allow_remote_os_upgrade = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        cfg.allow_remote_os_upgrade,
+    ));
     let last_scan_unix = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    management::commands::publish_status_details(&status_handle, &allow_remote_os_upgrade, &last_scan_unix);
+    management::commands::publish_status_details(
+        &status_handle,
+        &allow_remote_os_upgrade,
+        &last_scan_unix,
+    );
 
     let command_registry = sb_agent_core::command_intake::CommandRegistry::new();
     management::commands::register(
@@ -228,6 +234,42 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "Firewall Auditor falló");
+                    }
+                }
+
+                // ─── Intrusion Prevention Auditor (fail2ban/CrowdSec) ───
+                tracing::info!("Ejecutando Intrusion Prevention Auditor…");
+                match modules::intrusion_prevention_auditor::scan(&engine).await {
+                    Ok(findings) => {
+                        tracing::info!(count = findings.len(), "Intrusion Prevention Auditor completado");
+                        for event in findings {
+                            if let Some(event) = engine.process(event).await {
+                                if let Err(e) = output.send(event).await {
+                                    tracing::error!(error = %e, "Error enviando evento de Intrusion Prevention Auditor");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Intrusion Prevention Auditor falló");
+                    }
+                }
+
+                // ─── Auth Monitor (intentos de login fallidos) ───
+                tracing::info!("Ejecutando Auth Monitor…");
+                match modules::auth_monitor::scan(&engine).await {
+                    Ok(findings) => {
+                        tracing::info!(count = findings.len(), "Auth Monitor completado");
+                        for event in findings {
+                            if let Some(event) = engine.process(event).await {
+                                if let Err(e) = output.send(event).await {
+                                    tracing::error!(error = %e, "Error enviando evento de Auth Monitor");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Auth Monitor falló");
                     }
                 }
 

@@ -25,7 +25,11 @@ use std::sync::Arc;
 /// compartido. `set_details` reemplaza el JSON entero (no hace merge), así
 /// que cualquier sitio que quiera tocar un campo tiene que pasar por aquí
 /// para no pisar el otro.
-pub fn publish_status_details(status_handle: &StatusHandle, allow_remote_os_upgrade: &AtomicBool, last_scan_unix: &AtomicU64) {
+pub fn publish_status_details(
+    status_handle: &StatusHandle,
+    allow_remote_os_upgrade: &AtomicBool,
+    last_scan_unix: &AtomicU64,
+) {
     status_handle.set_details(serde_json::json!({
         "last_scan_unix": last_scan_unix.load(Ordering::Relaxed),
         "allow_remote_os_upgrade": allow_remote_os_upgrade.load(Ordering::Relaxed),
@@ -51,12 +55,24 @@ pub fn register(
         let flag = allow_remote_os_upgrade.clone();
         let status_handle = status_handle.clone();
         let last_scan_unix = last_scan_unix.clone();
-        async move { set_config::handle_set_allow_remote_os_upgrade(payload, flag, status_handle, last_scan_unix).await }
+        async move {
+            set_config::handle_set_allow_remote_os_upgrade(
+                payload,
+                flag,
+                status_handle,
+                last_scan_unix,
+            )
+            .await
+        }
     });
 
-    registry.register("sync_direct_token", move |payload, _progress| async move { set_config::handle_sync_direct_token(payload).await });
+    registry.register("sync_direct_token", move |payload, _progress| async move {
+        set_config::handle_sync_direct_token(payload).await
+    });
 
-    registry.register("update_now", move |_payload, _progress| async move { update_now::handle().await });
+    registry.register("update_now", move |_payload, _progress| async move {
+        update_now::handle().await
+    });
 }
 
 mod update_now {
@@ -71,9 +87,15 @@ mod update_now {
     /// retrasa un momento para que esta misma respuesta salga por el intake
     /// antes de que el reinicio corte la conexión.
     pub async fn handle() -> CommandOutcome {
-        let cfg = sb_agent_core::updater::UpdaterConfig::new("securyblack", "ferro-sentry", "ferro-sentry", env!("CARGO_PKG_VERSION"));
+        let cfg = sb_agent_core::updater::UpdaterConfig::new(
+            "securyblack",
+            "ferro-sentry",
+            "ferro-sentry",
+            env!("CARGO_PKG_VERSION"),
+        );
 
-        let result = tokio::task::spawn_blocking(move || sb_agent_core::updater::check_now(&cfg)).await;
+        let result =
+            tokio::task::spawn_blocking(move || sb_agent_core::updater::check_now(&cfg)).await;
 
         match result {
             Ok(Ok(true)) => {
@@ -119,14 +141,20 @@ mod set_config {
         };
 
         let config_path = sb_agent_core::config::default_config_path("ferro-sentry");
-        if let Err(e) = sb_agent_core::config::sync_bool_field(&config_path, "allow_remote_os_upgrade", request.enabled) {
+        if let Err(e) = sb_agent_core::config::sync_bool_field(
+            &config_path,
+            "allow_remote_os_upgrade",
+            request.enabled,
+        ) {
             return CommandOutcome::failed(format!("could not write config.toml: {e}"));
         }
 
         flag.store(request.enabled, Ordering::Relaxed);
         publish_status_details(&status_handle, &flag, &last_scan_unix);
 
-        CommandOutcome::ok(serde_json::json!({ "allow_remote_os_upgrade": request.enabled }).to_string())
+        CommandOutcome::ok(
+            serde_json::json!({ "allow_remote_os_upgrade": request.enabled }).to_string(),
+        )
     }
 
     #[derive(Debug, Deserialize)]
@@ -164,7 +192,9 @@ mod set_config {
         }
 
         let config_path = sb_agent_core::config::default_config_path("ferro-sentry");
-        if let Err(e) = sb_agent_core::config::sync_string_field(&config_path, "token", &request.token) {
+        if let Err(e) =
+            sb_agent_core::config::sync_string_field(&config_path, "token", &request.token)
+        {
             return CommandOutcome::failed(format!("could not write config.toml: {e}"));
         }
 
@@ -207,7 +237,11 @@ mod os_upgrade {
         "security_only".to_string()
     }
 
-    pub async fn handle(payload: serde_json::Value, progress: ProgressSender, allow_remote_os_upgrade: Arc<AtomicBool>) -> CommandOutcome {
+    pub async fn handle(
+        payload: serde_json::Value,
+        progress: ProgressSender,
+        allow_remote_os_upgrade: Arc<AtomicBool>,
+    ) -> CommandOutcome {
         if !allow_remote_os_upgrade.load(Ordering::Relaxed) {
             return CommandOutcome::failed(
                 "os_upgrade rejected: allow_remote_os_upgrade is disabled in this agent's config.toml",
@@ -240,12 +274,15 @@ mod os_upgrade {
         // dist-upgrade completo — misma orden que usa la detección para
         // contar, así lo que se aplica coincide con lo que se reportó.
         let mut cmd = Command::new("apt-get");
-        cmd.env("DEBIAN_FRONTEND", "noninteractive").env("LANG", "C");
+        cmd.env("DEBIAN_FRONTEND", "noninteractive")
+            .env("LANG", "C");
 
         if request.mode == "security_only" {
             let package_names = match vuln_scanner::list_security_package_names() {
                 Ok(names) => names,
-                Err(e) => return CommandOutcome::failed(format!("could not list security updates: {e}")),
+                Err(e) => {
+                    return CommandOutcome::failed(format!("could not list security updates: {e}"))
+                }
             };
             if package_names.is_empty() {
                 return CommandOutcome::ok(
@@ -277,8 +314,10 @@ mod os_upgrade {
         // solo leemos stdout, el pipe de stderr se llena y el proceso se
         // queda bloqueado escribiendo — el comando se colgaría sin llegar
         // nunca a `child.wait()`.
-        let mut stdout_lines = BufReader::new(child.stdout.take().expect("stdout is piped")).lines();
-        let mut stderr_lines = BufReader::new(child.stderr.take().expect("stderr is piped")).lines();
+        let mut stdout_lines =
+            BufReader::new(child.stdout.take().expect("stdout is piped")).lines();
+        let mut stderr_lines =
+            BufReader::new(child.stderr.take().expect("stderr is piped")).lines();
         let mut packages_upgraded: u32 = 0;
         let mut stderr_buf = String::new();
         let mut stdout_done = false;
@@ -318,7 +357,11 @@ mod os_upgrade {
             return CommandOutcome {
                 success: false,
                 stdout: String::new(),
-                stderr: if stderr_buf.is_empty() { format!("apt-get exited with {status}") } else { stderr_buf },
+                stderr: if stderr_buf.is_empty() {
+                    format!("apt-get exited with {status}")
+                } else {
+                    stderr_buf
+                },
                 exit_code: status.code().unwrap_or(1),
             };
         }
@@ -329,13 +372,20 @@ mod os_upgrade {
         let mut rebooted = false;
 
         if reboot_required && request.allow_reboot {
-            send(&progress, "rebooting", "Reboot required and requested — rebooting now", 100);
+            send(
+                &progress,
+                "rebooting",
+                "Reboot required and requested — rebooting now",
+                100,
+            );
             rebooted = true;
             // Fire-and-forget con margen de 1 minuto: da tiempo a que este
             // `CommandResponse` salga por el intake antes de que el propio
             // reinicio corte la conexión. El reinicio no depende de que
             // nadie lea la respuesta.
-            let _ = tokio::process::Command::new("shutdown").args(["-r", "+1"]).spawn();
+            let _ = tokio::process::Command::new("shutdown")
+                .args(["-r", "+1"])
+                .spawn();
         }
 
         CommandOutcome::ok(
@@ -354,7 +404,11 @@ mod os_upgrade {
 mod os_upgrade {
     use super::*;
 
-    pub async fn handle(_payload: serde_json::Value, _progress: ProgressSender, _allow_remote_os_upgrade: Arc<AtomicBool>) -> CommandOutcome {
+    pub async fn handle(
+        _payload: serde_json::Value,
+        _progress: ProgressSender,
+        _allow_remote_os_upgrade: Arc<AtomicBool>,
+    ) -> CommandOutcome {
         CommandOutcome::failed("os_upgrade is not implemented on this platform yet")
     }
 }

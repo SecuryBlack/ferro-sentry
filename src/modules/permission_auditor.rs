@@ -98,9 +98,93 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                 }
             }
         }
+
+        // 3. Sudo command logging
+        if !sudo_logging_configured() {
+            let details = json!({
+                "rule_id": "PERM-003",
+                "title": "Sudo Commands Are Not Being Logged",
+                "auditd_active": is_active("auditd"),
+                "summary": "No execve auditing (auditd) or sudo I/O logging was found. Privileged commands run via sudo are not being recorded for later audit.",
+                "remediation": "Enable auditd with an execve rule ('auditctl -a always,exit -F arch=b64 -S execve -k sudo_log') or set 'Defaults log_output' + 'Defaults logfile' in /etc/sudoers."
+            });
+
+            findings.push(
+                engine
+                    .build_event(
+                        "finding",
+                        "permission",
+                        Severity::Medium,
+                        "permission_auditor",
+                        details,
+                        Some("sudo_logging_not_configured"),
+                    )
+                    .await,
+            );
+        } else {
+            findings.push(
+                engine
+                    .build_resolved_event("permission_auditor", "sudo_logging_not_configured")
+                    .await,
+            );
+        }
     }
 
     let _ = engine;
 
     Ok(findings)
+}
+
+/// Sudo logging se considera cubierto por cualquiera de dos vías: auditd
+/// vigilando `execve` (la más completa, captura argumentos de cualquier
+/// comando, no solo los lanzados directamente por sudo), o logging propio de
+/// sudo vía `Defaults log_output`/`logfile` en sudoers. En Ubuntu/Debian el
+/// syslog captura por defecto la línea "sudo: user : COMMAND=..." vía
+/// authpriv, pero eso ya lo cubre auth_monitor indirectamente — aquí nos
+/// interesa la auditoría explícita, no el logging incidental de syslog.
+#[cfg(target_os = "linux")]
+fn sudo_logging_configured() -> bool {
+    if is_active("auditd") {
+        if let Ok(output) = std::process::Command::new("auditctl").arg("-l").output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("execve") {
+                return true;
+            }
+        }
+    }
+
+    for path in ["/etc/sudoers"] {
+        if let Ok(content) = fs::read_to_string(path) {
+            if content.lines().any(|l| {
+                let t = l.trim();
+                !t.starts_with('#') && (t.contains("log_output") || t.contains("logfile"))
+            }) {
+                return true;
+            }
+        }
+    }
+
+    if let Ok(entries) = fs::read_dir("/etc/sudoers.d") {
+        for entry in entries.flatten() {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                if content.lines().any(|l| {
+                    let t = l.trim();
+                    !t.starts_with('#') && (t.contains("log_output") || t.contains("logfile"))
+                }) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn is_active(service: &str) -> bool {
+    std::process::Command::new("systemctl")
+        .args(&["is-active", service])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
+        .unwrap_or(false)
 }

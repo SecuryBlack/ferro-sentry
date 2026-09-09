@@ -35,9 +35,18 @@ impl SecurityEvent {
         let extra = match self.rule_triggered.as_deref() {
             Some("pending_os_updates") | Some("reboot_required") => format!(
                 ":{}:{}:{}",
-                self.details.get("total_updates").and_then(|v| v.as_u64()).unwrap_or(0),
-                self.details.get("security_updates").and_then(|v| v.as_u64()).unwrap_or(0),
-                self.details.get("reboot_required").and_then(|v| v.as_bool()).unwrap_or(false),
+                self.details
+                    .get("total_updates")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                self.details
+                    .get("security_updates")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0),
+                self.details
+                    .get("reboot_required")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
             ),
             _ => String::new(),
         };
@@ -123,7 +132,16 @@ impl EventEngine {
     /// de hace semanas aunque el estado real ya haya cambiado. `event_type:
     /// "resolved"` le dice al backend que cierre el hallazgo abierto para
     /// (module, rule) en vez de crear/actualizar uno.
+    #[allow(dead_code)]
     pub async fn build_resolved_event(&self, module: &str, rule: &str) -> SecurityEvent {
-        self.build_event("resolved", "posture", Severity::Info, module, serde_json::json!({}), Some(rule)).await
+        self.build_event(
+            "resolved",
+            "posture",
+            Severity::Info,
+            module,
+            serde_json::json!({}),
+            Some(rule),
+        )
+        .await
     }
 }
