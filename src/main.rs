@@ -1,10 +1,12 @@
+#![allow(clippy::result_large_err)]
+
 mod config;
 mod engine;
 mod management;
 mod modules;
 mod output;
 
-use engine::{EventEngine, Severity};
+use engine::EventEngine;
 use output::{direct::DirectOutput, local_file::LocalFileOutput, sb_agent::SbAgentOutput, Output};
 use std::sync::Arc;
 
@@ -288,47 +290,6 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "SSL/TLS Auditor falló");
-                    }
-                }
-
-                // ─── Eventos de prueba legacy (Fase 0) ───
-                let test_events = vec![
-                    engine
-                        .build_event(
-                            "finding",
-                            "posture",
-                            Severity::High,
-                            "ssh_auditor",
-                            serde_json::json!({
-                                "finding": "PermitRootLogin=yes",
-                                "recommendation": "Set PermitRootLogin=no",
-                                "file": "/etc/ssh/sshd_config"
-                            }),
-                            Some("cis_ssh_root_login"),
-                        )
-                        .await,
-                    engine
-                        .build_event(
-                            "finding",
-                            "posture",
-                            Severity::Critical,
-                            "permission_auditor",
-                            serde_json::json!({
-                                "file": "/usr/bin/passwd",
-                                "suid": true,
-                                "owner": "root",
-                                "recommendation": "Review SUID binaries"
-                            }),
-                            Some("suid_binary_detected"),
-                        )
-                        .await,
-                ];
-
-                for event in test_events {
-                    if let Some(event) = engine.process(event).await {
-                        if let Err(e) = output.send(event).await {
-                            tracing::error!(error = %e, "Error enviando evento de prueba");
-                        }
                     }
                 }
 
