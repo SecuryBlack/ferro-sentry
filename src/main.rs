@@ -94,6 +94,7 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
         tokio::select! {
             _ = interval.tick() => {
                 tracing::info!("Iniciando escaneos de seguridad...");
+                engine.reset_scan_cache().await;
 
                 // ─── Port Scanner (Fase 1) ───
                 tracing::info!("Ejecutando Port Scanner…");

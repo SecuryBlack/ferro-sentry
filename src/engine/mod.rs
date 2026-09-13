@@ -112,6 +112,14 @@ impl EventEngine {
         Some(event)
     }
 
+    /// Reinicia el caché de deduplicación de escaneo periódico para auditorías de postura
+    /// (puertos, firewall, SSH, etc.), preservando solo eventos basados en logs continuos (auth_monitor).
+    /// Esto permite que cada ciclo horario refresque el estado activo hacia el backend.
+    pub async fn reset_scan_cache(&self) {
+        let mut seen = self.seen.lock().await;
+        seen.retain(|s| s.contains(":auth_monitor:"));
+    }
+
     pub async fn build_event(
         &self,
         event_type: &str,
