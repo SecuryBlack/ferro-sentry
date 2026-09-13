@@ -162,6 +162,14 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
 
     Ok(findings)
 }
+#[allow(dead_code)]
+pub fn detect_ssh_port() -> u16 {
+    let configs = find_sshd_configs();
+    let map = parse_sshd_configs(&configs);
+    map.get("port")
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(22)
+}
 
 fn find_sshd_configs() -> Vec<String> {
     let mut files = Vec::new();
