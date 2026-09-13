@@ -13,6 +13,7 @@ jobs:
     uses: securyblack/sb-agent-core/.github/workflows/release.yml@master
     with:
       binary-name: ferro-sentry
+      windows-static-crt: true
       targets-json: |
         [
           {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest","archive_ext":"tar.gz","cross":false},
