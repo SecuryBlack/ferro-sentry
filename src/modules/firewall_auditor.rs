@@ -86,6 +86,79 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                 }
             }
         }
+
+        // 3. Check if Docker bypasses UFW
+        let ufw_is_active = if has_command("ufw") {
+            if let Ok(output) = Command::new("ufw").arg("status").output() {
+                String::from_utf8_lossy(&output.stdout).contains("Status: active")
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if ufw_is_active && (has_command("docker") || std::path::Path::new("/var/run/docker.sock").exists()) {
+            let mut docker_user_configured = false;
+            if let Ok(output) = Command::new("iptables").args(&["-S", "DOCKER-USER"]).output() {
+                let s = String::from_utf8_lossy(&output.stdout);
+                let lines: Vec<&str> = s.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+                let has_filter_rules = lines.iter().any(|line| {
+                    line.contains("DROP")
+                        || line.contains("REJECT")
+                        || line.contains("ufw-")
+                        || (!line.contains("RETURN") && line.starts_with("-A"))
+                });
+                if has_filter_rules {
+                    docker_user_configured = true;
+                }
+            }
+
+            let mut exposed_ports: Vec<String> = Vec::new();
+            if let Ok(output) = Command::new("docker")
+                .args(&["ps", "--format", "{{.Names}}: {{.Ports}}"])
+                .output()
+            {
+                let s = String::from_utf8_lossy(&output.stdout);
+                for line in s.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.contains("0.0.0.0:") || trimmed.contains(":::") || trimmed.contains("[::]:") {
+                        exposed_ports.push(trimmed.to_string());
+                    }
+                }
+            }
+
+            if !docker_user_configured && !exposed_ports.is_empty() {
+                let details = json!({
+                    "rule_id": "FW-003",
+                    "title": "Docker Bypasses Host Firewall (UFW)",
+                    "firewall_type": "ufw",
+                    "status": "unprotected_docker",
+                    "exposed_containers": exposed_ports,
+                    "summary": "Docker creates its own iptables NAT rules that route traffic before UFW's INPUT chain, exposing container ports directly to the internet.",
+                    "remediation": "Configure the DOCKER-USER chain in /etc/ufw/after.rules or bind internal container ports explicitly to 127.0.0.1 (e.g. 127.0.0.1:5432:5432)."
+                });
+
+                findings.push(
+                    engine
+                        .build_event(
+                            "finding",
+                            "firewall",
+                            Severity::High,
+                            "firewall_auditor",
+                            details,
+                            Some("docker_ufw_bypass"),
+                        )
+                        .await,
+                );
+            } else if docker_user_configured || exposed_ports.is_empty() {
+                findings.push(
+                    engine
+                        .build_resolved_event("firewall_auditor", "docker_ufw_bypass")
+                        .await,
+                );
+            }
+        }
     }
 
     let _ = engine;
