@@ -89,6 +89,10 @@ pub fn register(
     registry.register("firewall_delete_rule", move |payload, _progress| async move {
         firewall::handle_delete_rule(payload).await
     });
+
+    registry.register("firewall_install_ufw", move |_payload, _progress| async move {
+        firewall::handle_install_ufw().await
+    });
 }
 
 mod update_now {
@@ -563,6 +567,20 @@ mod firewall {
     }
 
     #[cfg(target_os = "linux")]
+    pub async fn handle_install_ufw() -> CommandOutcome {
+        tokio::task::spawn_blocking(install_ufw_linux)
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_install_ufw() -> CommandOutcome {
+        CommandOutcome::failed(
+            "UFW installation is only supported on Linux".to_string(),
+        )
+    }
+
+    #[cfg(target_os = "linux")]
     fn get_status_linux() -> CommandOutcome {
         use std::process::Command;
 
@@ -879,6 +897,71 @@ mod firewall {
                 CommandOutcome::failed(format!("ufw delete failed: {stderr} {stdout}"))
             }
             Err(e) => CommandOutcome::failed(format!("failed to execute ufw: {e}")),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn install_ufw_linux() -> CommandOutcome {
+        use std::process::Command;
+
+        let check_cmd = |name: &str| -> bool {
+            Command::new("which")
+                .arg(name)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+
+        if check_cmd("ufw") {
+            return CommandOutcome::ok(
+                serde_json::json!({ "success": true, "message": "UFW is already installed" }).to_string(),
+            );
+        }
+
+        let res = if check_cmd("apt-get") {
+            Command::new("apt-get")
+                .env("DEBIAN_FRONTEND", "noninteractive")
+                .env("LANG", "C")
+                .args(["install", "-y", "ufw"])
+                .output()
+        } else if check_cmd("dnf") {
+            Command::new("dnf").args(["install", "-y", "ufw"]).output()
+        } else if check_cmd("yum") {
+            Command::new("yum").args(["install", "-y", "ufw"]).output()
+        } else if check_cmd("pacman") {
+            Command::new("pacman").args(["-Sy", "--noconfirm", "ufw"]).output()
+        } else if check_cmd("zypper") {
+            Command::new("zypper").args(["--non-interactive", "install", "ufw"]).output()
+        } else if check_cmd("apk") {
+            Command::new("apk").args(["add", "ufw"]).output()
+        } else {
+            return CommandOutcome::failed(
+                "No supported package manager found to install UFW (apt-get, dnf, yum, pacman, zypper, apk)".to_string(),
+            );
+        };
+
+        match res {
+            Ok(o) if o.status.success() => {
+                if check_cmd("ufw") {
+                    CommandOutcome::ok(
+                        serde_json::json!({
+                            "success": true,
+                            "message": "UFW installed successfully"
+                        })
+                        .to_string(),
+                    )
+                } else {
+                    CommandOutcome::failed(
+                        "Installation command succeeded but 'ufw' binary was not found in PATH".to_string(),
+                    )
+                }
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                CommandOutcome::failed(format!("Failed to install UFW: {stderr} {stdout}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to execute installer: {e}")),
         }
     }
 }
