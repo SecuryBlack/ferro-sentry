@@ -40,6 +40,12 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                             )
                             .await,
                     );
+                } else if stdout.contains("Status: active") {
+                    findings.push(
+                        engine
+                            .build_resolved_event("firewall_auditor", "ufw_inactive")
+                            .await,
+                    );
                 }
             }
         } else if has_command("iptables") {
@@ -69,6 +75,12 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                                 details,
                                 Some("iptables_default_accept"),
                             )
+                            .await,
+                    );
+                } else if stdout.contains("Chain INPUT (policy DROP)") || stdout.contains("Chain INPUT (policy REJECT)") {
+                    findings.push(
+                        engine
+                            .build_resolved_event("firewall_auditor", "iptables_default_accept")
                             .await,
                     );
                 }
