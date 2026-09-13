@@ -6,9 +6,14 @@ use crate::engine::Severity;
 #[cfg(target_os = "linux")]
 use serde_json::json;
 #[cfg(target_os = "linux")]
+use std::collections::HashSet;
+#[cfg(target_os = "linux")]
 use std::fs;
 #[cfg(target_os = "linux")]
-use std::path::Path;
+use std::sync::Mutex;
+
+#[cfg(target_os = "linux")]
+static PREVIOUS_PROCESS_RULES: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
@@ -16,6 +21,8 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
 
     #[cfg(target_os = "linux")]
     {
+        let mut current_rules = HashSet::new();
+
         // Scan /proc for running process executables
         if let Ok(entries) = fs::read_dir("/proc") {
             for entry in entries.flatten() {
@@ -31,6 +38,9 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                                 || path_str.starts_with("/var/tmp")
                                 || path_str.starts_with("/dev/shm")
                             {
+                                let rule = format!("proc_temp_exec_{}", pid_str);
+                                current_rules.insert(rule.clone());
+
                                 let details = json!({
                                     "rule_id": "PROC-001",
                                     "title": "Process Executing from Temporary Directory",
@@ -48,7 +58,7 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                                             Severity::High,
                                             "process_sentinel",
                                             details,
-                                            Some(&format!("proc_temp_exec_{}", pid_str)),
+                                            Some(&rule),
                                         )
                                         .await,
                                 );
@@ -56,6 +66,9 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
 
                             // 2. Dangling binary handle (deleted binary running)
                             if path_str.contains("(deleted)") {
+                                let rule = format!("proc_deleted_exec_{}", pid_str);
+                                current_rules.insert(rule.clone());
+
                                 let details = json!({
                                     "rule_id": "PROC-002",
                                     "title": "Process Running with Deleted Binary (Dangling Handle)",
@@ -73,7 +86,7 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                                             Severity::High,
                                             "process_sentinel",
                                             details,
-                                            Some(&format!("proc_deleted_exec_{}", pid_str)),
+                                            Some(&rule),
                                         )
                                         .await,
                                 );
@@ -83,6 +96,23 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                 }
             }
         }
+
+        // Auto-resolución: si una regla de proceso detectada en el escaneo anterior
+        // ya no está presente (el proceso murió o ya no tiene un handle borrado),
+        // emitir un evento 'resolved' para que se cierre el hallazgo activo en la base de datos.
+        let mut prev_lock = PREVIOUS_PROCESS_RULES.lock().unwrap();
+        if let Some(ref prev) = *prev_lock {
+            for old_rule in prev {
+                if !current_rules.contains(old_rule) {
+                    findings.push(
+                        engine
+                            .build_resolved_event("process_sentinel", old_rule)
+                            .await,
+                    );
+                }
+            }
+        }
+        *prev_lock = Some(current_rules);
     }
 
     let _ = engine;

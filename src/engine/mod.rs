@@ -94,6 +94,18 @@ impl EventEngine {
             return None;
         }
 
+        // Si es un evento de resolución, desalojar la firma de hallazgo previa
+        // para que si la anomalía vuelve a ocurrir en el futuro se vuelva a reportar.
+        // Y viceversa: si es un nuevo hallazgo, desalojar la firma de resolución.
+        let rule_name = event.rule_triggered.as_deref().unwrap_or("none");
+        if event.event_type == "resolved" {
+            let finding_prefix = format!("finding:{}:{}:{}", event.module, event.host, rule_name);
+            seen.retain(|s| !s.starts_with(&finding_prefix));
+        } else if event.event_type == "finding" {
+            let resolved_prefix = format!("resolved:{}:{}:{}", event.module, event.host, rule_name);
+            seen.retain(|s| !s.starts_with(&resolved_prefix));
+        }
+
         seen.insert(sig);
 
         // TODO: throttling, scoring más avanzado
