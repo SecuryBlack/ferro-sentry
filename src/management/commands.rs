@@ -93,6 +93,18 @@ pub fn register(
     registry.register("firewall_install_ufw", move |_payload, _progress| async move {
         firewall::handle_install_ufw().await
     });
+
+    registry.register("ssh_hardening", move |payload, _progress| async move {
+        ssh_hardening::handle(payload).await
+    });
+
+    registry.register("configure_unattended_upgrades", move |_payload, _progress| async move {
+        auto_upgrades::handle().await
+    });
+
+    registry.register("install_fail2ban", move |_payload, _progress| async move {
+        intrusion_prevention::handle().await
+    });
 }
 
 mod update_now {
@@ -965,3 +977,500 @@ mod firewall {
         }
     }
 }
+
+mod ssh_hardening {
+    use super::*;
+
+    #[derive(serde::Deserialize, Default)]
+    #[allow(dead_code)]
+    pub struct SshHardeningPayload {
+        #[serde(default = "default_true")]
+        pub disable_password_auth: bool,
+        #[serde(default = "default_true")]
+        pub disable_root_login: bool,
+        #[serde(default = "default_true")]
+        pub disable_x11_forwarding: bool,
+        #[serde(default = "default_max_auth_tries")]
+        pub max_auth_tries: u32,
+    }
+
+    fn default_true() -> bool {
+        true
+    }
+
+    fn default_max_auth_tries() -> u32 {
+        3
+    }
+
+    pub async fn handle(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || {
+            let opts: SshHardeningPayload = serde_json::from_value(payload).unwrap_or_default();
+            apply_ssh_hardening(opts)
+        })
+        .await
+        .unwrap_or_else(|e| CommandOutcome::failed(format!("Task panicked: {e}")))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn apply_ssh_hardening(opts: SshHardeningPayload) -> CommandOutcome {
+        use std::fs;
+        use std::path::Path;
+        use std::process::Command;
+
+        // Anti-lockout check: if disable_password_auth is requested, check if any authorized_keys exist
+        if opts.disable_password_auth && !has_authorized_keys() {
+            return CommandOutcome::failed(
+                "Anti-lockout abort: No authorized SSH public keys found on this server. Configure an SSH key before disabling password authentication.".to_string(),
+            );
+        }
+
+        // Locate sshd binary to test syntax
+        let sshd_bin = match find_sshd_binary() {
+            Some(bin) => bin,
+            None => return CommandOutcome::failed("sshd binary not found to validate configuration".to_string()),
+        };
+
+        let mut directives = Vec::new();
+        if opts.disable_password_auth {
+            directives.push("PasswordAuthentication no".to_string());
+            directives.push("KbdInteractiveAuthentication no".to_string());
+            directives.push("ChallengeResponseAuthentication no".to_string());
+        }
+        if opts.disable_root_login {
+            directives.push("PermitRootLogin prohibit-password".to_string());
+        }
+        if opts.disable_x11_forwarding {
+            directives.push("X11Forwarding no".to_string());
+        }
+        let max_tries = opts.max_auth_tries.clamp(1, 6);
+        directives.push(format!("MaxAuthTries {max_tries}"));
+
+        let content_to_apply = format!(
+            "# SecuryBlack SSH Hardening - Generated automatically\n{}\n",
+            directives.join("\n")
+        );
+
+        let sshd_config_d = Path::new("/etc/ssh/sshd_config.d");
+        let dropin_file = sshd_config_d.join("99-securyblack-hardening.conf");
+        let main_config = Path::new("/etc/ssh/sshd_config");
+        let main_backup = Path::new("/etc/ssh/sshd_config.sb-bak");
+
+        // Backup main config if it exists
+        if main_config.exists() {
+            if let Err(e) = fs::copy(main_config, main_backup) {
+                return CommandOutcome::failed(format!("Failed to backup /etc/ssh/sshd_config: {e}"));
+            }
+        }
+
+        let keys_to_override = [
+            "passwordauthentication",
+            "kbdinteractiveauthentication",
+            "challengeresponseauthentication",
+            "permitrootlogin",
+            "x11forwarding",
+            "maxauthtries",
+        ];
+
+        let used_dropin = sshd_config_d.is_dir();
+
+        if main_config.exists() {
+            // Comment out conflicting directives in main sshd_config so drop-in or appended settings win
+            if let Ok(content) = fs::read_to_string(main_config) {
+                let mut modified_lines = Vec::new();
+                let mut has_include = false;
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("Include ") && trimmed.contains("sshd_config.d") {
+                        has_include = true;
+                    }
+                    if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                        if !parts.is_empty() && keys_to_override.contains(&parts[0].to_lowercase().as_str()) {
+                            modified_lines.push(format!("# [SecuryBlack hardened] {line}"));
+                            continue;
+                        }
+                    }
+                    modified_lines.push(line.to_string());
+                }
+
+                if used_dropin && !has_include {
+                    modified_lines.insert(0, "Include /etc/ssh/sshd_config.d/*.conf".to_string());
+                } else if !used_dropin {
+                    modified_lines.push(String::new());
+                    modified_lines.push(content_to_apply.clone());
+                }
+
+                let new_main_content = modified_lines.join("\n") + "\n";
+                if let Err(e) = fs::write(main_config, new_main_content) {
+                    if main_backup.exists() {
+                        let _ = fs::copy(main_backup, main_config);
+                    }
+                    return CommandOutcome::failed(format!("Failed to write /etc/ssh/sshd_config: {e}"));
+                }
+            }
+        }
+
+        if used_dropin {
+            if let Err(e) = fs::write(&dropin_file, &content_to_apply) {
+                if main_backup.exists() {
+                    let _ = fs::copy(main_backup, main_config);
+                }
+                return CommandOutcome::failed(format!("Failed to write drop-in configuration: {e}"));
+            }
+        }
+
+        // Validate syntax with sshd -t
+        let test_res = Command::new(&sshd_bin).arg("-t").output();
+        let valid = match test_res {
+            Ok(ref out) => out.status.success(),
+            Err(_) => false,
+        };
+
+        if !valid {
+            // Rollback immediately
+            if used_dropin {
+                let _ = fs::remove_file(&dropin_file);
+            }
+            if main_backup.exists() {
+                let _ = fs::copy(main_backup, main_config);
+            }
+            let err_msg = test_res
+                .map(|o| {
+                    format!(
+                        "{} {}",
+                        String::from_utf8_lossy(&o.stderr),
+                        String::from_utf8_lossy(&o.stdout)
+                    )
+                })
+                .unwrap_or_else(|e| e.to_string());
+            return CommandOutcome::failed(format!(
+                "SSH configuration test (sshd -t) failed, rolled back changes: {err_msg}"
+            ));
+        }
+
+        // Clean up backup file upon success
+        if main_backup.exists() {
+            let _ = fs::remove_file(main_backup);
+        }
+
+        // Reload ssh daemon cleanly without dropping active connections
+        let reload_res = Command::new("systemctl")
+            .args(["reload", "ssh"])
+            .output()
+            .or_else(|_| Command::new("systemctl").args(["reload", "sshd"]).output())
+            .or_else(|_| Command::new("service").args(["ssh", "reload"]).output())
+            .or_else(|_| Command::new("service").args(["sshd", "reload"]).output());
+
+        match reload_res {
+            Ok(o) if o.status.success() => CommandOutcome::ok(
+                serde_json::json!({
+                    "success": true,
+                    "message": "SSH configuration hardened and sshd reloaded successfully",
+                    "directives": directives,
+                })
+                .to_string(),
+            ),
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                CommandOutcome::failed(format!("SSH config validated but service reload failed: {stderr} {stdout}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to reload SSH service: {e}")),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn find_sshd_binary() -> Option<String> {
+        use std::path::Path;
+        use std::process::Command;
+
+        if Command::new("sshd").arg("-V").output().is_ok() {
+            return Some("sshd".to_string());
+        }
+        for path in ["/usr/sbin/sshd", "/sbin/sshd", "/usr/bin/sshd"] {
+            if Path::new(path).exists() {
+                return Some(path.to_string());
+            }
+        }
+        None
+    }
+
+    #[cfg(target_os = "linux")]
+    fn has_authorized_keys() -> bool {
+        use std::fs;
+        use std::path::Path;
+
+        let check_key_file = |path: &Path| -> bool {
+            if let Ok(content) = fs::read_to_string(path) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    if trimmed.len() >= 20
+                        && (trimmed.contains("ssh-rsa")
+                            || trimmed.contains("ssh-ed25519")
+                            || trimmed.contains("ecdsa-sha2-nistp")
+                            || trimmed.contains("sk-ssh-ed25519")
+                            || trimmed.contains("sk-ecdsa-sha2-nistp"))
+                    {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
+
+        // 1. Root authorized_keys
+        if check_key_file(Path::new("/root/.ssh/authorized_keys")) {
+            return true;
+        }
+
+        // 2. Scan /home/*/.ssh/authorized_keys
+        if let Ok(entries) = fs::read_dir("/home") {
+            for entry in entries.flatten() {
+                let key_path = entry.path().join(".ssh").join("authorized_keys");
+                if check_key_file(&key_path) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn apply_ssh_hardening(_opts: SshHardeningPayload) -> CommandOutcome {
+        CommandOutcome::failed("SSH hardening remediation is only supported on Linux hosts".to_string())
+    }
+}
+
+mod auto_upgrades {
+    use super::*;
+
+    pub async fn handle() -> CommandOutcome {
+        tokio::task::spawn_blocking(configure_auto_upgrades)
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("Task panicked: {e}")))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn configure_auto_upgrades() -> CommandOutcome {
+        use std::fs;
+        use std::path::Path;
+        use std::process::Command;
+
+        let check_cmd = |name: &str| -> bool {
+            Command::new("which")
+                .arg(name)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+
+        if check_cmd("apt-get") {
+            // 1. Install unattended-upgrades if needed
+            if !check_cmd("unattended-upgrade") {
+                let install_res = Command::new("apt-get")
+                    .env("DEBIAN_FRONTEND", "noninteractive")
+                    .env("LANG", "C")
+                    .args(["install", "-y", "unattended-upgrades"])
+                    .output();
+                match install_res {
+                    Ok(o) if o.status.success() => {}
+                    Ok(o) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        return CommandOutcome::failed(format!("Failed to install unattended-upgrades: {stderr}"));
+                    }
+                    Err(e) => return CommandOutcome::failed(format!("Failed to run apt-get install: {e}")),
+                }
+            }
+
+            // 2. Write /etc/apt/apt.conf.d/20auto-upgrades
+            let conf_dir = Path::new("/etc/apt/apt.conf.d");
+            if !conf_dir.exists() {
+                let _ = fs::create_dir_all(conf_dir);
+            }
+            let auto_conf = "APT::Periodic::Update-Package-Lists \"1\";\nAPT::Periodic::Unattended-Upgrade \"1\";\n";
+            if let Err(e) = fs::write("/etc/apt/apt.conf.d/20auto-upgrades", auto_conf) {
+                return CommandOutcome::failed(format!("Failed to write /etc/apt/apt.conf.d/20auto-upgrades: {e}"));
+            }
+
+            // 3. Enable and start systemd service/timers
+            let _ = Command::new("systemctl")
+                .args(["enable", "--now", "unattended-upgrades"])
+                .output();
+            let _ = Command::new("systemctl")
+                .args(["enable", "--now", "apt-daily.timer", "apt-daily-upgrade.timer"])
+                .output();
+
+            CommandOutcome::ok(
+                serde_json::json!({
+                    "success": true,
+                    "message": "Unattended security upgrades successfully configured and enabled (Debian/Ubuntu)"
+                })
+                .to_string(),
+            )
+        } else if check_cmd("dnf") {
+            let install_res = Command::new("dnf")
+                .args(["install", "-y", "dnf-automatic"])
+                .output();
+            if let Ok(o) = install_res {
+                if o.status.success() {
+                    let _ = Command::new("systemctl")
+                        .args(["enable", "--now", "dnf-automatic.timer"])
+                        .output();
+                    return CommandOutcome::ok(
+                        serde_json::json!({
+                            "success": true,
+                            "message": "Automatic security updates configured via dnf-automatic (RHEL/Fedora)"
+                        })
+                        .to_string(),
+                    );
+                }
+            }
+            CommandOutcome::failed("Failed to configure automatic updates via dnf".to_string())
+        } else if check_cmd("yum") {
+            let install_res = Command::new("yum")
+                .args(["install", "-y", "yum-cron"])
+                .output();
+            if let Ok(o) = install_res {
+                if o.status.success() {
+                    let _ = Command::new("systemctl")
+                        .args(["enable", "--now", "yum-cron"])
+                        .output();
+                    return CommandOutcome::ok(
+                        serde_json::json!({
+                            "success": true,
+                            "message": "Automatic security updates configured via yum-cron (CentOS/RHEL)"
+                        })
+                        .to_string(),
+                    );
+                }
+            }
+            CommandOutcome::failed("Failed to configure automatic updates via yum".to_string())
+        } else {
+            CommandOutcome::failed(
+                "No supported package manager found for unattended upgrades (apt-get, dnf, yum)".to_string(),
+            )
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn configure_auto_upgrades() -> CommandOutcome {
+        CommandOutcome::failed("Unattended upgrades remediation is only supported on Linux hosts".to_string())
+    }
+}
+
+mod intrusion_prevention {
+    use super::*;
+
+    pub async fn handle() -> CommandOutcome {
+        tokio::task::spawn_blocking(install_and_configure_fail2ban)
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("Task panicked: {e}")))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn install_and_configure_fail2ban() -> CommandOutcome {
+        use std::fs;
+        use std::path::Path;
+        use std::process::Command;
+
+        let check_cmd = |name: &str| -> bool {
+            Command::new("which")
+                .arg(name)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+
+        // 1. Install fail2ban if not present
+        if !check_cmd("fail2ban-client") && !check_cmd("fail2ban-server") {
+            let res = if check_cmd("apt-get") {
+                Command::new("apt-get")
+                    .env("DEBIAN_FRONTEND", "noninteractive")
+                    .env("LANG", "C")
+                    .args(["install", "-y", "fail2ban"])
+                    .output()
+            } else if check_cmd("dnf") {
+                Command::new("dnf").args(["install", "-y", "fail2ban"]).output()
+            } else if check_cmd("yum") {
+                Command::new("yum").args(["install", "-y", "epel-release", "fail2ban"]).output()
+            } else if check_cmd("pacman") {
+                Command::new("pacman").args(["-Sy", "--noconfirm", "fail2ban"]).output()
+            } else if check_cmd("zypper") {
+                Command::new("zypper").args(["--non-interactive", "install", "fail2ban"]).output()
+            } else if check_cmd("apk") {
+                Command::new("apk").args(["add", "fail2ban"]).output()
+            } else {
+                return CommandOutcome::failed(
+                    "No supported package manager found to install fail2ban (apt-get, dnf, yum, pacman, zypper, apk)".to_string(),
+                );
+            };
+
+            match res {
+                Ok(o) if o.status.success() => {}
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    let stdout = String::from_utf8_lossy(&o.stdout);
+                    return CommandOutcome::failed(format!("Failed to install fail2ban: {stderr} {stdout}"));
+                }
+                Err(e) => return CommandOutcome::failed(format!("Failed to execute installer for fail2ban: {e}")),
+            }
+        }
+
+        // 2. Configure /etc/fail2ban/jail.local with the active SSH port
+        let ssh_port = crate::modules::ssh_auditor::detect_ssh_port();
+        let jail_local = Path::new("/etc/fail2ban/jail.local");
+
+        let jail_content = if jail_local.exists() {
+            let mut existing = fs::read_to_string(jail_local).unwrap_or_default();
+            if !existing.contains("[sshd]") {
+                existing.push_str(&format!(
+                    "\n[sshd]\nenabled = true\nport = {ssh_port}\nmaxretry = 5\nbantime = 1h\nfindtime = 10m\n"
+                ));
+            }
+            existing
+        } else {
+            format!(
+                "[DEFAULT]\nbantime = 1h\nfindtime = 10m\nmaxretry = 5\n\n[sshd]\nenabled = true\nport = {ssh_port}\n"
+            )
+        };
+
+        if Path::new("/etc/fail2ban").is_dir() {
+            let _ = fs::write(jail_local, jail_content);
+        }
+
+        // 3. Enable and start fail2ban service
+        let enable_res = Command::new("systemctl")
+            .args(["enable", "--now", "fail2ban"])
+            .output()
+            .or_else(|_| Command::new("service").args(["fail2ban", "restart"]).output());
+
+        match enable_res {
+            Ok(o) if o.status.success() => {
+                CommandOutcome::ok(
+                    serde_json::json!({
+                        "success": true,
+                        "message": format!("fail2ban installed and active, protecting SSH on port {ssh_port}"),
+                        "ssh_port": ssh_port,
+                    })
+                    .to_string(),
+                )
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                CommandOutcome::failed(format!("fail2ban installed but failed to start service: {stderr} {stdout}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to start fail2ban service: {e}")),
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn install_and_configure_fail2ban() -> CommandOutcome {
+        CommandOutcome::failed("Intrusion prevention remediation is only supported on Linux hosts".to_string())
+    }
+}
+
