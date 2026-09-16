@@ -125,6 +125,18 @@ pub fn register(
     registry.register("fail2ban_set_whitelist", move |payload, _progress| async move {
         fail2ban::handle_set_whitelist(payload).await
     });
+
+    registry.register("fail2ban_get_logs", move |payload, _progress| async move {
+        fail2ban::handle_get_logs(payload).await
+    });
+
+    registry.register("fail2ban_get_config", move |_payload, _progress| async move {
+        fail2ban::handle_get_config().await
+    });
+
+    registry.register("fail2ban_set_config", move |payload, _progress| async move {
+        fail2ban::handle_set_config(payload).await
+    });
 }
 
 mod update_now {
@@ -1559,6 +1571,59 @@ mod fail2ban {
         ips: Vec<String>,
     }
 
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct GetLogsPayload {
+        tail: Option<usize>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    pub struct Fail2banLogEvent {
+        pub timestamp: String,
+        pub jail: String,
+        pub action: String, // "ban" | "unban" | "found" | "restore"
+        pub ip: String,
+        pub raw: String,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    pub struct TopAttacker {
+        pub ip: String,
+        pub count: u32,
+        pub last_action: String,
+        pub last_seen: String,
+        pub jail: String,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct Fail2banLogsResponse {
+        pub raw_logs: String,
+        pub events: Vec<Fail2banLogEvent>,
+        pub top_attackers: Vec<TopAttacker>,
+        pub total_events: usize,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    pub struct Fail2banConfig {
+        pub bantime: String,
+        pub findtime: String,
+        pub maxretry: u32,
+        pub bantime_increment: bool,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct SetConfigPayload {
+        bantime: Option<String>,
+        findtime: Option<String>,
+        maxretry: Option<u32>,
+        bantime_increment: Option<bool>,
+    }
+
     #[cfg(target_os = "linux")]
     pub async fn handle_get_status() -> CommandOutcome {
         tokio::task::spawn_blocking(get_status_linux)
@@ -1630,6 +1695,42 @@ mod fail2ban {
 
     #[cfg(not(target_os = "linux"))]
     pub async fn handle_set_whitelist(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("Fail2Ban management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_get_logs(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || get_logs_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_get_logs(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("Fail2Ban management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_get_config() -> CommandOutcome {
+        tokio::task::spawn_blocking(get_config_linux)
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_get_config() -> CommandOutcome {
+        CommandOutcome::failed("Fail2Ban management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_set_config(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || set_config_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_set_config(_payload: serde_json::Value) -> CommandOutcome {
         CommandOutcome::failed("Fail2Ban management is only supported on Linux hosts".to_string())
     }
 
@@ -2084,6 +2185,327 @@ mod fail2ban {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    fn get_logs_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::process::Command;
+        use std::fs;
+
+        let req: GetLogsPayload = serde_json::from_value(payload).unwrap_or(GetLogsPayload { tail: None });
+        let tail_lines = req.tail.unwrap_or(150).clamp(10, 1000);
+
+        let raw_content = if let Ok(content) = fs::read_to_string("/var/log/fail2ban.log") {
+            let lines: Vec<&str> = content.lines().collect();
+            let start = if lines.len() > tail_lines { lines.len() - tail_lines } else { 0 };
+            lines[start..].join("\n")
+        } else {
+            // Fallback to journalctl
+            let j_out = Command::new("journalctl")
+                .args(["-u", "fail2ban", "-n", &tail_lines.to_string(), "--no-pager"])
+                .output();
+            j_out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+        };
+
+        let mut events = Vec::new();
+        for line in raw_content.lines() {
+            if let Some(event) = parse_fail2ban_log_line(line) {
+                events.push(event);
+            }
+        }
+
+        // Aggregate top attackers
+        use std::collections::HashMap;
+        let mut map: HashMap<String, (u32, String, String, String)> = HashMap::new(); // ip -> (count, last_action, last_seen, jail)
+        for ev in &events {
+            let entry = map.entry(ev.ip.clone()).or_insert((0, ev.action.clone(), ev.timestamp.clone(), ev.jail.clone()));
+            entry.0 += 1;
+            entry.1 = ev.action.clone();
+            entry.2 = ev.timestamp.clone();
+            entry.3 = ev.jail.clone();
+        }
+
+        let mut top_attackers: Vec<TopAttacker> = map.into_iter().map(|(ip, (count, last_action, last_seen, jail))| {
+            TopAttacker {
+                ip,
+                count,
+                last_action,
+                last_seen,
+                jail,
+            }
+        }).collect();
+
+        top_attackers.sort_by(|a, b| b.count.cmp(&a.count));
+        top_attackers.truncate(20);
+
+        // Reverse events so the newest ones are first
+        events.reverse();
+
+        let total_events = events.len();
+        let resp = Fail2banLogsResponse {
+            raw_logs: raw_content,
+            events,
+            top_attackers,
+            total_events,
+        };
+
+        CommandOutcome::ok(serde_json::to_string(&resp).unwrap_or_default())
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn parse_fail2ban_log_line(line: &str) -> Option<Fail2banLogEvent> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let (action, ip, jail) = if let Some(pos) = trimmed.find("Ban ") {
+            let rest = trimmed[pos + 4..].trim();
+            let ip = rest.split_whitespace().next()?.trim_matches(',').to_string();
+            let jail = extract_jail_from_line(trimmed).unwrap_or_else(|| "sshd".to_string());
+            let action = if trimmed[..pos].trim_end().ends_with("Restore") { "restore" } else { "ban" };
+            (action.to_string(), ip, jail)
+        } else if let Some(pos) = trimmed.find("Unban ") {
+            let rest = trimmed[pos + 6..].trim();
+            let ip = rest.split_whitespace().next()?.trim_matches(',').to_string();
+            let jail = extract_jail_from_line(trimmed).unwrap_or_else(|| "sshd".to_string());
+            ("unban".to_string(), ip, jail)
+        } else if let Some(pos) = trimmed.find("Found ") {
+            let rest = trimmed[pos + 6..].trim();
+            let ip = rest.split_whitespace().next()?.trim_matches(',').to_string();
+            let jail = extract_jail_from_line(trimmed).unwrap_or_else(|| "sshd".to_string());
+            ("found".to_string(), ip, jail)
+        } else {
+            return None;
+        };
+
+        // Extract timestamp (either first 19 chars "YYYY-MM-DD HH:MM:SS" or first 15 chars syslog)
+        let timestamp = if trimmed.len() >= 19 && trimmed.chars().nth(4) == Some('-') && trimmed.chars().nth(7) == Some('-') {
+            trimmed[..19].to_string()
+        } else if trimmed.len() >= 15 {
+            trimmed[..15].to_string()
+        } else {
+            "recent".to_string()
+        };
+
+        Some(Fail2banLogEvent {
+            timestamp,
+            jail,
+            action,
+            ip,
+            raw: trimmed.to_string(),
+        })
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn extract_jail_from_line(line: &str) -> Option<String> {
+        let mut search_from = 0;
+        while let Some(start) = line[search_from..].find('[') {
+            let abs_start = search_from + start;
+            if let Some(end) = line[abs_start..].find(']') {
+                let abs_end = abs_start + end;
+                let inside = &line[abs_start + 1..abs_end];
+                if !inside.chars().all(|c| c.is_ascii_digit()) && !inside.is_empty() {
+                    return Some(inside.to_string());
+                }
+                search_from = abs_end + 1;
+            } else {
+                break;
+            }
+        }
+        None
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_config_linux() -> CommandOutcome {
+        use std::process::Command;
+        use std::fs;
+        use std::path::Path;
+
+        let mut bantime = "10m".to_string();
+        let mut findtime = "10m".to_string();
+        let mut maxretry = 5u32;
+        let mut bantime_increment = false;
+
+        for path in &["/etc/fail2ban/jail.local", "/etc/fail2ban/jail.conf"] {
+            let p = Path::new(path);
+            if p.exists() {
+                if let Ok(content) = fs::read_to_string(p) {
+                    let mut in_default = false;
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                            in_default = trimmed.eq_ignore_ascii_case("[default]");
+                        }
+                        if in_default {
+                            if let Some((k, v)) = trimmed.split_once('=') {
+                                let key = k.trim().to_lowercase();
+                                let val = v.trim();
+                                if key == "bantime" {
+                                    bantime = val.to_string();
+                                } else if key == "findtime" {
+                                    findtime = val.to_string();
+                                } else if key == "maxretry" {
+                                    if let Ok(n) = val.parse::<u32>() {
+                                        maxretry = n;
+                                    }
+                                } else if key == "bantime.increment" {
+                                    bantime_increment = val.eq_ignore_ascii_case("true") || val == "1";
+                                }
+                            }
+                        }
+                    }
+                }
+                if p.to_str() == Some("/etc/fail2ban/jail.local") {
+                    break;
+                }
+            }
+        }
+
+        if let Ok(out) = Command::new("fail2ban-client").args(["get", "sshd", "bantime"]).output() {
+            if out.status.success() {
+                let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !v.is_empty() {
+                    bantime = v;
+                }
+            }
+        }
+        if let Ok(out) = Command::new("fail2ban-client").args(["get", "sshd", "maxretry"]).output() {
+            if out.status.success() {
+                let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if let Ok(n) = v.parse::<u32>() {
+                    maxretry = n;
+                }
+            }
+        }
+        if let Ok(out) = Command::new("fail2ban-client").args(["get", "sshd", "findtime"]).output() {
+            if out.status.success() {
+                let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !v.is_empty() {
+                    findtime = v;
+                }
+            }
+        }
+
+        let cfg = Fail2banConfig {
+            bantime,
+            findtime,
+            maxretry,
+            bantime_increment,
+        };
+
+        CommandOutcome::ok(serde_json::to_string(&cfg).unwrap_or_default())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_config_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::process::Command;
+        use std::fs;
+        use std::path::Path;
+
+        let req: SetConfigPayload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        let jail_local = Path::new("/etc/fail2ban/jail.local");
+        let existing = if jail_local.exists() {
+            fs::read_to_string(jail_local).unwrap_or_default()
+        } else {
+            "[DEFAULT]\n\n[sshd]\nenabled = true\n".to_string()
+        };
+
+        let mut updates: Vec<(&str, String)> = Vec::new();
+        if let Some(ref bt) = req.bantime {
+            updates.push(("bantime", format!("bantime = {bt}")));
+        }
+        if let Some(ref ft) = req.findtime {
+            updates.push(("findtime", format!("findtime = {ft}")));
+        }
+        if let Some(mr) = req.maxretry {
+            updates.push(("maxretry", format!("maxretry = {mr}")));
+        }
+        if let Some(bi) = req.bantime_increment {
+            updates.push(("bantime.increment", format!("bantime.increment = {bi}")));
+        }
+
+        let new_content = update_default_ini_keys(&existing, &updates);
+
+        if let Err(e) = fs::write(jail_local, new_content) {
+            return CommandOutcome::failed(format!("Failed to write /etc/fail2ban/jail.local: {e}"));
+        }
+
+        let reload_res = Command::new("fail2ban-client").arg("reload").output();
+        match reload_res {
+            Ok(o) if o.status.success() => {
+                CommandOutcome::ok(serde_json::json!({
+                    "success": true,
+                    "applied": {
+                        "bantime": req.bantime,
+                        "findtime": req.findtime,
+                        "maxretry": req.maxretry,
+                        "bantime_increment": req.bantime_increment
+                    }
+                }).to_string())
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                CommandOutcome::failed(format!("Failed to reload fail2ban configuration: {stderr}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to execute fail2ban-client reload: {e}")),
+        }
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn update_default_ini_keys(existing: &str, updates: &[(&str, String)]) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        let mut in_default = false;
+        let mut found_keys: Vec<bool> = vec![false; updates.len()];
+
+        for line in existing.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                in_default = trimmed.eq_ignore_ascii_case("[default]");
+            }
+
+            if in_default {
+                let mut replaced = false;
+                for (i, (key_prefix, full_line)) in updates.iter().enumerate() {
+                    if let Some((k, _)) = trimmed.split_once('=') {
+                        if k.trim().eq_ignore_ascii_case(key_prefix) {
+                            lines.push(full_line.clone());
+                            found_keys[i] = true;
+                            replaced = true;
+                            break;
+                        }
+                    }
+                }
+                if !replaced {
+                    lines.push(line.to_string());
+                }
+            } else {
+                lines.push(line.to_string());
+            }
+        }
+
+        let mut missing_lines: Vec<String> = Vec::new();
+        for (i, (_, full_line)) in updates.iter().enumerate() {
+            if !found_keys[i] {
+                missing_lines.push(full_line.clone());
+            }
+        }
+
+        if !missing_lines.is_empty() {
+            if let Some(pos) = lines.iter().position(|l| l.trim().eq_ignore_ascii_case("[default]")) {
+                for (idx, line_to_insert) in missing_lines.into_iter().enumerate() {
+                    lines.insert(pos + 1 + idx, line_to_insert);
+                }
+            } else {
+                lines.insert(0, format!("[DEFAULT]\n{}", missing_lines.join("\n")));
+            }
+        }
+
+        lines.join("\n")
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -2097,7 +2519,6 @@ mod fail2ban {
 
         #[test]
         fn test_parse_jail_status_tree_format() {
-            // Real output from fail2ban-client status sshd with tree characters and indentation
             let sample = r#"Status for the jail: sshd
 |- Filter
 |  |- Currently failed: 3
@@ -2116,6 +2537,51 @@ mod fail2ban {
             assert_eq!(jail.total_banned, 15);
             assert_eq!(jail.file_list, vec!["/var/log/auth.log", "/var/log/secure"]);
             assert_eq!(jail.banned_ips, vec!["192.168.1.100", "10.0.0.5"]);
+        }
+
+        #[test]
+        fn test_parse_fail2ban_log_line() {
+            let ban_line = "2026-09-16 12:25:01,123 fail2ban.actions [1234]: NOTICE [sshd] Ban 192.168.1.10";
+            let ev1 = parse_fail2ban_log_line(ban_line).unwrap();
+            assert_eq!(ev1.action, "ban");
+            assert_eq!(ev1.ip, "192.168.1.10");
+            assert_eq!(ev1.jail, "sshd");
+            assert_eq!(ev1.timestamp, "2026-09-16 12:25:01");
+
+            let found_line = "2026-09-16 12:24:50,456 fail2ban.filter [1234]: INFO [sshd] Found 10.0.0.99 - 2026-09-16 12:24:50";
+            let ev2 = parse_fail2ban_log_line(found_line).unwrap();
+            assert_eq!(ev2.action, "found");
+            assert_eq!(ev2.ip, "10.0.0.99");
+            assert_eq!(ev2.jail, "sshd");
+
+            let unban_line = "2026-09-16 13:25:01,789 fail2ban.actions [1234]: NOTICE [sshd] Unban 192.168.1.10";
+            let ev3 = parse_fail2ban_log_line(unban_line).unwrap();
+            assert_eq!(ev3.action, "unban");
+            assert_eq!(ev3.ip, "192.168.1.10");
+        }
+
+        #[test]
+        fn test_update_default_ini_keys() {
+            let existing = r#"[DEFAULT]
+bantime = 10m
+findtime = 10m
+maxretry = 5
+
+[sshd]
+enabled = true
+port = 22
+"#;
+            let updates = vec![
+                ("bantime", "bantime = 1h".to_string()),
+                ("maxretry", "maxretry = 3".to_string()),
+                ("bantime.increment", "bantime.increment = true".to_string()),
+            ];
+            let modified = update_default_ini_keys(existing, &updates);
+            assert!(modified.contains("bantime = 1h"));
+            assert!(modified.contains("maxretry = 3"));
+            assert!(modified.contains("bantime.increment = true"));
+            assert!(modified.contains("findtime = 10m"));
+            assert!(modified.contains("[sshd]\nenabled = true"));
         }
     }
 }
