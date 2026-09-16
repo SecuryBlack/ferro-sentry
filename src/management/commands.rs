@@ -1746,17 +1746,18 @@ mod fail2ban {
         None
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", test))]
     fn parse_jail_list(output: &str) -> Vec<String> {
         let mut jails = Vec::new();
         for line in output.lines() {
             let trimmed = line.trim();
-            if let Some(pos) = trimmed.to_lowercase().find("jail list:") {
-                let rest = trimmed[pos + "jail list:".len()..].trim();
-                for part in rest.split(',') {
-                    let j = part.trim();
-                    if !j.is_empty() {
-                        jails.push(j.to_string());
+            if let Some((left, right)) = trimmed.split_once(':') {
+                if left.to_lowercase().contains("jail list") {
+                    for part in right.split(',') {
+                        let j = part.trim();
+                        if !j.is_empty() {
+                            jails.push(j.to_string());
+                        }
                     }
                 }
             }
@@ -1764,7 +1765,7 @@ mod fail2ban {
         jails
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", test))]
     fn parse_jail_status(name: &str, output: &str) -> Fail2banJail {
         let mut currently_failed = 0;
         let mut total_failed = 0;
@@ -1774,42 +1775,27 @@ mod fail2ban {
         let mut banned_ips = Vec::new();
 
         for line in output.lines() {
-            let lower = line.to_lowercase();
             let trimmed = line.trim();
+            if let Some((left, right)) = trimmed.split_once(':') {
+                let key = left.to_lowercase();
+                let val = right.trim();
 
-            if lower.contains("currently failed:") {
-                if let Some(pos) = lower.find("currently failed:") {
-                    let val_str = trimmed[pos + "currently failed:".len()..].trim();
-                    currently_failed = val_str.parse::<u32>().unwrap_or(0);
-                }
-            } else if lower.contains("total failed:") {
-                if let Some(pos) = lower.find("total failed:") {
-                    let val_str = trimmed[pos + "total failed:".len()..].trim();
-                    total_failed = val_str.parse::<u32>().unwrap_or(0);
-                }
-            } else if lower.contains("file list:") {
-                if let Some(pos) = lower.find("file list:") {
-                    let val_str = trimmed[pos + "file list:".len()..].trim();
-                    file_list = val_str
+                if key.contains("currently failed") {
+                    currently_failed = val.parse::<u32>().unwrap_or(0);
+                } else if key.contains("total failed") {
+                    total_failed = val.parse::<u32>().unwrap_or(0);
+                } else if key.contains("file list") {
+                    file_list = val
                         .split_whitespace()
                         .map(|s| s.trim_matches(',').to_string())
                         .filter(|s| !s.is_empty())
                         .collect();
-                }
-            } else if lower.contains("currently banned:") {
-                if let Some(pos) = lower.find("currently banned:") {
-                    let val_str = trimmed[pos + "currently banned:".len()..].trim();
-                    currently_banned = val_str.parse::<u32>().unwrap_or(0);
-                }
-            } else if lower.contains("total banned:") {
-                if let Some(pos) = lower.find("total banned:") {
-                    let val_str = trimmed[pos + "total banned:".len()..].trim();
-                    total_banned = val_str.parse::<u32>().unwrap_or(0);
-                }
-            } else if lower.contains("banned ip list:") {
-                if let Some(pos) = lower.find("banned ip list:") {
-                    let val_str = trimmed[pos + "banned ip list:".len()..].trim();
-                    banned_ips = val_str
+                } else if key.contains("currently banned") {
+                    currently_banned = val.parse::<u32>().unwrap_or(0);
+                } else if key.contains("total banned") {
+                    total_banned = val.parse::<u32>().unwrap_or(0);
+                } else if key.contains("banned ip list") {
+                    banned_ips = val
                         .split_whitespace()
                         .map(|s| s.trim_matches(',').to_string())
                         .filter(|s| !s.is_empty())
@@ -2095,6 +2081,41 @@ mod fail2ban {
                 CommandOutcome::failed(format!("Failed to reload fail2ban configuration: {stderr}"))
             }
             Err(e) => CommandOutcome::failed(format!("Failed to execute fail2ban-client reload: {e}")),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_parse_jail_list() {
+            let sample = "Status\n|- Number of jail: 2\n`- Jail list: sshd, recidive\n";
+            let jails = parse_jail_list(sample);
+            assert_eq!(jails, vec!["sshd", "recidive"]);
+        }
+
+        #[test]
+        fn test_parse_jail_status_tree_format() {
+            // Real output from fail2ban-client status sshd with tree characters and indentation
+            let sample = r#"Status for the jail: sshd
+|- Filter
+|  |- Currently failed: 3
+|  |- Total failed:     42
+|  `- File list:        /var/log/auth.log, /var/log/secure
+`- Actions
+   |- Currently banned: 2
+   |- Total banned:     15
+   `- Banned IP list:   192.168.1.100 10.0.0.5
+"#;
+            let jail = parse_jail_status("sshd", sample);
+            assert_eq!(jail.name, "sshd");
+            assert_eq!(jail.currently_failed, 3);
+            assert_eq!(jail.total_failed, 42);
+            assert_eq!(jail.currently_banned, 2);
+            assert_eq!(jail.total_banned, 15);
+            assert_eq!(jail.file_list, vec!["/var/log/auth.log", "/var/log/secure"]);
+            assert_eq!(jail.banned_ips, vec!["192.168.1.100", "10.0.0.5"]);
         }
     }
 }
