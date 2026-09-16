@@ -76,15 +76,16 @@ try {
     if ($Mode -eq "") { $Mode = "direct" }
     @"
 # Ferro-Sentry configuration
-# Do not share this file — it contains your auth token.
+# Do not share this file - it contains your auth token.
 version = "$version"
 mode = "$Mode"
 api_url = "$Endpoint"
 token = "$Token"
 log_level = "info"
 local_file_path = "C:/ProgramData/ferro-sentry/ferro-sentry_events.jsonl"
-"@ | Set-Content -Path $ConfigFile
+"@ | Set-Content -Path $ConfigFile -Encoding UTF8
 
+    Protect-SbConfigFile -Path $ConfigFile
     Write-SbSuccess "Config written"
 
     # ─── Windows Service ──────────────────────────────────────────────────────
