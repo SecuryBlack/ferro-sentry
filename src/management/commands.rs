@@ -137,6 +137,34 @@ pub fn register(
     registry.register("fail2ban_set_config", move |payload, _progress| async move {
         fail2ban::handle_set_config(payload).await
     });
+
+    registry.register("install_crowdsec", move |_payload, _progress| async move {
+        crowdsec::handle_install().await
+    });
+
+    registry.register("crowdsec_get_status", move |_payload, _progress| async move {
+        crowdsec::handle_get_status().await
+    });
+
+    registry.register("crowdsec_toggle", move |payload, _progress| async move {
+        crowdsec::handle_toggle(payload).await
+    });
+
+    registry.register("crowdsec_ban_ip", move |payload, _progress| async move {
+        crowdsec::handle_ban_ip(payload).await
+    });
+
+    registry.register("crowdsec_unban_ip", move |payload, _progress| async move {
+        crowdsec::handle_unban_ip(payload).await
+    });
+
+    registry.register("crowdsec_get_alerts", move |payload, _progress| async move {
+        crowdsec::handle_get_alerts(payload).await
+    });
+
+    registry.register("crowdsec_install_collection", move |payload, _progress| async move {
+        crowdsec::handle_install_collection(payload).await
+    });
 }
 
 mod update_now {
@@ -2585,5 +2613,535 @@ port = 22
         }
     }
 }
+
+mod crowdsec {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    pub struct CrowdsecBouncer {
+        pub name: String,
+        #[serde(default)]
+        pub ip_address: Option<String>,
+        #[serde(default)]
+        pub valid: bool,
+        #[serde(default)]
+        pub last_pull: Option<String>,
+        #[serde(rename = "type", default)]
+        pub bouncer_type: Option<String>,
+        #[serde(default)]
+        pub version: Option<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    pub struct CrowdsecDecision {
+        #[serde(default)]
+        pub id: Option<i64>,
+        #[serde(default)]
+        pub origin: String,
+        #[serde(rename = "type", default)]
+        pub decision_type: String,
+        #[serde(default)]
+        pub scope: String,
+        #[serde(default)]
+        pub value: String,
+        #[serde(default)]
+        pub duration: String,
+        #[serde(default)]
+        pub until: Option<String>,
+        #[serde(default)]
+        pub scenario: String,
+        #[serde(default)]
+        pub simulated: bool,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    pub struct CrowdsecCollection {
+        pub name: String,
+        #[serde(default)]
+        pub status: String,
+        #[serde(default)]
+        pub local_version: Option<String>,
+        #[serde(default)]
+        pub description: Option<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct CrowdsecStatus {
+        pub supported: bool,
+        pub installed: bool,
+        pub active: bool,
+        pub version: Option<String>,
+        pub bouncers_count: usize,
+        pub active_decisions_count: usize,
+        pub bouncers: Vec<CrowdsecBouncer>,
+        pub decisions: Vec<CrowdsecDecision>,
+        pub collections: Vec<CrowdsecCollection>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub message: Option<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct TogglePayload {
+        enabled: bool,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct BanPayload {
+        ip: String,
+        duration: Option<String>,
+        reason: Option<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct UnbanPayload {
+        ip: String,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct GetAlertsPayload {
+        limit: Option<usize>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct InstallCollectionPayload {
+        name: String,
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_install() -> CommandOutcome {
+        tokio::task::spawn_blocking(install_crowdsec_linux)
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_install() -> CommandOutcome {
+        CommandOutcome::failed("CrowdSec installation is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_get_status() -> CommandOutcome {
+        tokio::task::spawn_blocking(get_status_linux)
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_get_status() -> CommandOutcome {
+        CommandOutcome::ok(
+            serde_json::to_string(&CrowdsecStatus {
+                supported: false,
+                installed: false,
+                active: false,
+                version: None,
+                bouncers_count: 0,
+                active_decisions_count: 0,
+                bouncers: Vec::new(),
+                decisions: Vec::new(),
+                collections: Vec::new(),
+                message: Some("CrowdSec management is only supported on Linux hosts".to_string()),
+            })
+            .unwrap_or_default(),
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_toggle(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || toggle_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_toggle(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("CrowdSec management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_ban_ip(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || ban_ip_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_ban_ip(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("CrowdSec management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_unban_ip(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || unban_ip_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_unban_ip(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("CrowdSec management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_get_alerts(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || get_alerts_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_get_alerts(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("CrowdSec management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_install_collection(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || install_collection_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_install_collection(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("CrowdSec management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_status_linux() -> CommandOutcome {
+        use std::process::Command;
+
+        let which_cmd = Command::new("which").arg("cscli").output();
+        let has_cscli = which_cmd.map(|o| o.status.success()).unwrap_or(false);
+
+        if !has_cscli {
+            return CommandOutcome::ok(
+                serde_json::to_string(&CrowdsecStatus {
+                    supported: true,
+                    installed: false,
+                    active: false,
+                    version: None,
+                    bouncers_count: 0,
+                    active_decisions_count: 0,
+                    bouncers: Vec::new(),
+                    decisions: Vec::new(),
+                    collections: Vec::new(),
+                    message: Some("CrowdSec is not installed on this host".to_string()),
+                })
+                .unwrap_or_default(),
+            );
+        }
+
+        let is_active_cmd = Command::new("systemctl").args(["is-active", "crowdsec"]).output();
+        let active = is_active_cmd
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
+            .unwrap_or(false);
+
+        let version = Command::new("cscli")
+            .arg("version")
+            .output()
+            .ok()
+            .and_then(|o| {
+                let s = String::from_utf8_lossy(&o.stdout).to_string();
+                for line in s.lines() {
+                    let line = line.trim();
+                    if line.starts_with("version:") {
+                        return Some(line.trim_start_matches("version:").trim().to_string());
+                    }
+                    if line.starts_with("CrowdSec v") {
+                        return Some(line.trim_start_matches("CrowdSec ").trim().to_string());
+                    }
+                }
+                s.lines().next().map(|l| l.trim().to_string())
+            });
+
+        // Bouncers list
+        let bouncers: Vec<CrowdsecBouncer> = Command::new("cscli")
+            .args(["bouncers", "list", "-o", "json"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                serde_json::from_str(&stdout).ok()
+            })
+            .unwrap_or_default();
+        let bouncers_count = bouncers.len();
+
+        // Decisions list (active bans / captchas)
+        let decisions: Vec<CrowdsecDecision> = Command::new("cscli")
+            .args(["decisions", "list", "-o", "json"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                serde_json::from_str(&stdout).ok()
+            })
+            .unwrap_or_default();
+        let active_decisions_count = decisions.len();
+
+        // Collections list
+        let collections: Vec<CrowdsecCollection> = Command::new("cscli")
+            .args(["collections", "list", "-o", "json"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                serde_json::from_str(&stdout).ok()
+            })
+            .unwrap_or_default();
+
+        CommandOutcome::ok(
+            serde_json::to_string(&CrowdsecStatus {
+                supported: true,
+                installed: true,
+                active,
+                version,
+                bouncers_count,
+                active_decisions_count,
+                bouncers,
+                decisions,
+                collections,
+                message: if !active {
+                    Some("CrowdSec service is stopped".to_string())
+                } else {
+                    None
+                },
+            })
+            .unwrap_or_default(),
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn toggle_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::process::Command;
+
+        let req: TogglePayload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        let action = if req.enabled { "start" } else { "stop" };
+        let res = Command::new("systemctl").args([action, "crowdsec"]).output();
+
+        match res {
+            Ok(o) if o.status.success() => {
+                if req.enabled {
+                    let _ = Command::new("systemctl").args(["enable", "crowdsec"]).output();
+                }
+                get_status_linux()
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                CommandOutcome::failed(format!("systemctl {action} crowdsec failed: {stderr}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to execute systemctl: {e}")),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn ban_ip_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::process::Command;
+
+        let req: BanPayload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        let ip = req.ip.trim();
+        if ip.is_empty() || ip.contains(' ') || ip.contains(';') || ip.contains('&') || ip.contains('|') {
+            return CommandOutcome::failed("Invalid IP address".to_string());
+        }
+
+        let duration = req.duration.unwrap_or_else(|| "4h".to_string());
+        let reason = req.reason.unwrap_or_else(|| "Manual ban from SecuryBlack".to_string());
+
+        let res = Command::new("cscli")
+            .args(["decisions", "add", "--ip", ip, "--duration", &duration, "--reason", &reason])
+            .output();
+
+        match res {
+            Ok(o) if o.status.success() => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                CommandOutcome::ok(
+                    serde_json::json!({ "success": true, "ip": ip, "message": stdout.trim() })
+                        .to_string(),
+                )
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                CommandOutcome::failed(format!("cscli decisions add failed: {stderr}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to execute cscli: {e}")),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn unban_ip_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::process::Command;
+
+        let req: UnbanPayload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        let ip = req.ip.trim();
+        if ip.is_empty() || ip.contains(' ') || ip.contains(';') || ip.contains('&') || ip.contains('|') {
+            return CommandOutcome::failed("Invalid IP address".to_string());
+        }
+
+        let res = Command::new("cscli")
+            .args(["decisions", "delete", "--ip", ip])
+            .output();
+
+        match res {
+            Ok(o) if o.status.success() => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                CommandOutcome::ok(
+                    serde_json::json!({ "success": true, "ip": ip, "message": stdout.trim() })
+                        .to_string(),
+                )
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                CommandOutcome::failed(format!("cscli decisions delete failed: {stderr}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to execute cscli: {e}")),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_alerts_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::process::Command;
+
+        let req: GetAlertsPayload = serde_json::from_value(payload).unwrap_or(GetAlertsPayload { limit: Some(50) });
+        let limit = req.limit.unwrap_or(50).clamp(1, 200).to_string();
+
+        let res = Command::new("cscli")
+            .args(["alerts", "list", "-o", "json", "--limit", &limit])
+            .output();
+
+        match res {
+            Ok(o) if o.status.success() => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                CommandOutcome::ok(stdout.to_string())
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                CommandOutcome::failed(format!("cscli alerts list failed: {stderr}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to execute cscli: {e}")),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn install_collection_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::process::Command;
+
+        let req: InstallCollectionPayload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        let name = req.name.trim();
+        if name.is_empty() || name.contains(' ') || name.contains(';') {
+            return CommandOutcome::failed("Invalid collection name".to_string());
+        }
+
+        let res = Command::new("cscli")
+            .args(["collections", "install", name])
+            .output();
+
+        match res {
+            Ok(o) if o.status.success() => {
+                let _ = Command::new("systemctl").args(["reload", "crowdsec"]).output();
+                CommandOutcome::ok(
+                    serde_json::json!({ "success": true, "collection": name }).to_string(),
+                )
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                CommandOutcome::failed(format!("cscli collections install failed: {stderr}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to execute cscli: {e}")),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn install_crowdsec_linux() -> CommandOutcome {
+        use std::process::Command;
+
+        let check_cmd = |name: &str| -> bool {
+            Command::new("which")
+                .arg(name)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+
+        if check_cmd("apt-get") {
+            // Setup repo script
+            let script_install = Command::new("sh")
+                .args(["-c", "curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh | bash"])
+                .output();
+
+            if let Err(e) = script_install {
+                return CommandOutcome::failed(format!("Failed to download CrowdSec setup script: {e}"));
+            }
+
+            let install_res = Command::new("apt-get")
+                .env("DEBIAN_FRONTEND", "noninteractive")
+                .args(["install", "-y", "crowdsec", "crowdsec-firewall-bouncer-iptables"])
+                .output();
+
+            match install_res {
+                Ok(o) if o.status.success() => {
+                    let _ = Command::new("systemctl").args(["enable", "--now", "crowdsec"]).output();
+                    let _ = Command::new("systemctl").args(["enable", "--now", "crowdsec-firewall-bouncer"]).output();
+                    get_status_linux()
+                }
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    CommandOutcome::failed(format!("apt install crowdsec failed: {stderr}"))
+                }
+                Err(e) => CommandOutcome::failed(format!("Failed to run apt-get: {e}")),
+            }
+        } else if check_cmd("dnf") {
+            let script_install = Command::new("sh")
+                .args(["-c", "curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.rpm.sh | bash"])
+                .output();
+
+            if let Err(e) = script_install {
+                return CommandOutcome::failed(format!("Failed to download CrowdSec setup script: {e}"));
+            }
+
+            let install_res = Command::new("dnf")
+                .args(["install", "-y", "crowdsec", "crowdsec-firewall-bouncer-iptables"])
+                .output();
+
+            match install_res {
+                Ok(o) if o.status.success() => {
+                    let _ = Command::new("systemctl").args(["enable", "--now", "crowdsec"]).output();
+                    get_status_linux()
+                }
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    CommandOutcome::failed(format!("dnf install crowdsec failed: {stderr}"))
+                }
+                Err(e) => CommandOutcome::failed(format!("Failed to run dnf: {e}")),
+            }
+        } else {
+            CommandOutcome::failed("Unsupported package manager for 1-click CrowdSec install. Please install via official packagecloud repository.".to_string())
+        }
+    }
+}
+
 
 
