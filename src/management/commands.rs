@@ -105,6 +105,26 @@ pub fn register(
     registry.register("install_fail2ban", move |_payload, _progress| async move {
         intrusion_prevention::handle().await
     });
+
+    registry.register("fail2ban_get_status", move |_payload, _progress| async move {
+        fail2ban::handle_get_status().await
+    });
+
+    registry.register("fail2ban_toggle", move |payload, _progress| async move {
+        fail2ban::handle_toggle(payload).await
+    });
+
+    registry.register("fail2ban_unban_ip", move |payload, _progress| async move {
+        fail2ban::handle_unban_ip(payload).await
+    });
+
+    registry.register("fail2ban_ban_ip", move |payload, _progress| async move {
+        fail2ban::handle_ban_ip(payload).await
+    });
+
+    registry.register("fail2ban_set_whitelist", move |payload, _progress| async move {
+        fail2ban::handle_set_whitelist(payload).await
+    });
 }
 
 mod update_now {
@@ -1473,4 +1493,610 @@ mod intrusion_prevention {
         CommandOutcome::failed("Intrusion prevention remediation is only supported on Linux hosts".to_string())
     }
 }
+
+mod fail2ban {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    pub struct Fail2banJail {
+        pub name: String,
+        pub currently_failed: u32,
+        pub total_failed: u32,
+        pub currently_banned: u32,
+        pub total_banned: u32,
+        pub file_list: Vec<String>,
+        pub banned_ips: Vec<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize, Clone)]
+    pub struct BannedIpEntry {
+        pub ip: String,
+        pub jail: String,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct Fail2banStatus {
+        pub supported: bool,
+        pub installed: bool,
+        pub active: bool,
+        pub version: Option<String>,
+        pub total_banned: u32,
+        pub total_failed: u32,
+        pub jails: Vec<Fail2banJail>,
+        pub all_banned_ips: Vec<BannedIpEntry>,
+        pub ignore_ips: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub message: Option<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct TogglePayload {
+        enabled: bool,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct UnbanPayload {
+        ip: String,
+        jail: Option<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct BanPayload {
+        ip: String,
+        jail: Option<String>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    struct SetWhitelistPayload {
+        ips: Vec<String>,
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_get_status() -> CommandOutcome {
+        tokio::task::spawn_blocking(get_status_linux)
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_get_status() -> CommandOutcome {
+        CommandOutcome::ok(
+            serde_json::json!({
+                "supported": false,
+                "installed": false,
+                "active": false,
+                "version": null,
+                "total_banned": 0,
+                "total_failed": 0,
+                "jails": [],
+                "all_banned_ips": [],
+                "ignore_ips": [],
+                "message": "Fail2Ban management is only supported on Linux hosts"
+            })
+            .to_string(),
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_toggle(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || toggle_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_toggle(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("Fail2Ban management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_unban_ip(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || unban_ip_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_unban_ip(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("Fail2Ban management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_ban_ip(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || ban_ip_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_ban_ip(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("Fail2Ban management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn handle_set_whitelist(payload: serde_json::Value) -> CommandOutcome {
+        tokio::task::spawn_blocking(move || set_whitelist_linux(payload))
+            .await
+            .unwrap_or_else(|e| CommandOutcome::failed(format!("task panicked: {e}")))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn handle_set_whitelist(_payload: serde_json::Value) -> CommandOutcome {
+        CommandOutcome::failed("Fail2Ban management is only supported on Linux hosts".to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_status_linux() -> CommandOutcome {
+        use std::process::Command;
+
+        let which_cmd = Command::new("which").arg("fail2ban-client").output();
+        let has_fail2ban = which_cmd.map(|o| o.status.success()).unwrap_or(false);
+
+        if !has_fail2ban {
+            return CommandOutcome::ok(
+                serde_json::to_string(&Fail2banStatus {
+                    supported: true,
+                    installed: false,
+                    active: false,
+                    version: None,
+                    total_banned: 0,
+                    total_failed: 0,
+                    jails: Vec::new(),
+                    all_banned_ips: Vec::new(),
+                    ignore_ips: Vec::new(),
+                    message: Some("Fail2Ban is not installed on this host".to_string()),
+                })
+                .unwrap_or_default(),
+            );
+        }
+
+        let is_active_cmd = Command::new("systemctl").args(["is-active", "fail2ban"]).output();
+        let active = is_active_cmd
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
+            .unwrap_or(false);
+
+        if !active {
+            // Also check via fail2ban-client ping in case it's managed without systemd
+            let ping = Command::new("fail2ban-client").arg("ping").output();
+            let is_ping_ok = ping.map(|o| String::from_utf8_lossy(&o.stdout).contains("Server replied: pong")).unwrap_or(false);
+
+            if !is_ping_ok {
+                return CommandOutcome::ok(
+                    serde_json::to_string(&Fail2banStatus {
+                        supported: true,
+                        installed: true,
+                        active: false,
+                        version: get_version(),
+                        total_banned: 0,
+                        total_failed: 0,
+                        jails: Vec::new(),
+                        all_banned_ips: Vec::new(),
+                        ignore_ips: get_ignore_ips(&[]),
+                        message: Some("Fail2Ban service is stopped".to_string()),
+                    })
+                    .unwrap_or_default(),
+                );
+            }
+        }
+
+        let version = get_version();
+
+        // Query active jails
+        let status_out = Command::new("fail2ban-client").arg("status").output();
+        let status_str = status_out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+        let jail_names = parse_jail_list(&status_str);
+
+        let mut jails = Vec::new();
+        let mut all_banned_ips = Vec::new();
+        let mut total_banned = 0;
+        let mut total_failed = 0;
+
+        for jail_name in &jail_names {
+            if let Ok(j_out) = Command::new("fail2ban-client").args(["status", jail_name]).output() {
+                let j_str = String::from_utf8_lossy(&j_out.stdout);
+                let jail_info = parse_jail_status(jail_name, &j_str);
+                total_banned += jail_info.currently_banned;
+                total_failed += jail_info.total_failed;
+                for ip in &jail_info.banned_ips {
+                    all_banned_ips.push(BannedIpEntry {
+                        ip: ip.clone(),
+                        jail: jail_name.clone(),
+                    });
+                }
+                jails.push(jail_info);
+            }
+        }
+
+        let ignore_ips = get_ignore_ips(&jail_names);
+
+        let status = Fail2banStatus {
+            supported: true,
+            installed: true,
+            active: true,
+            version,
+            total_banned,
+            total_failed,
+            jails,
+            all_banned_ips,
+            ignore_ips,
+            message: None,
+        };
+
+        CommandOutcome::ok(serde_json::to_string(&status).unwrap_or_default())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_version() -> Option<String> {
+        use std::process::Command;
+        let out = Command::new("fail2ban-client").arg("version").output().ok()?;
+        if out.status.success() {
+            let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+        None
+    }
+
+    #[cfg(target_os = "linux")]
+    fn parse_jail_list(output: &str) -> Vec<String> {
+        let mut jails = Vec::new();
+        for line in output.lines() {
+            let trimmed = line.trim();
+            if let Some(pos) = trimmed.to_lowercase().find("jail list:") {
+                let rest = trimmed[pos + "jail list:".len()..].trim();
+                for part in rest.split(',') {
+                    let j = part.trim();
+                    if !j.is_empty() {
+                        jails.push(j.to_string());
+                    }
+                }
+            }
+        }
+        jails
+    }
+
+    #[cfg(target_os = "linux")]
+    fn parse_jail_status(name: &str, output: &str) -> Fail2banJail {
+        let mut currently_failed = 0;
+        let mut total_failed = 0;
+        let mut currently_banned = 0;
+        let mut total_banned = 0;
+        let mut file_list = Vec::new();
+        let mut banned_ips = Vec::new();
+
+        for line in output.lines() {
+            let lower = line.to_lowercase();
+            let trimmed = line.trim();
+
+            if lower.contains("currently failed:") {
+                if let Some(pos) = lower.find("currently failed:") {
+                    let val_str = trimmed[pos + "currently failed:".len()..].trim();
+                    currently_failed = val_str.parse::<u32>().unwrap_or(0);
+                }
+            } else if lower.contains("total failed:") {
+                if let Some(pos) = lower.find("total failed:") {
+                    let val_str = trimmed[pos + "total failed:".len()..].trim();
+                    total_failed = val_str.parse::<u32>().unwrap_or(0);
+                }
+            } else if lower.contains("file list:") {
+                if let Some(pos) = lower.find("file list:") {
+                    let val_str = trimmed[pos + "file list:".len()..].trim();
+                    file_list = val_str
+                        .split_whitespace()
+                        .map(|s| s.trim_matches(',').to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                }
+            } else if lower.contains("currently banned:") {
+                if let Some(pos) = lower.find("currently banned:") {
+                    let val_str = trimmed[pos + "currently banned:".len()..].trim();
+                    currently_banned = val_str.parse::<u32>().unwrap_or(0);
+                }
+            } else if lower.contains("total banned:") {
+                if let Some(pos) = lower.find("total banned:") {
+                    let val_str = trimmed[pos + "total banned:".len()..].trim();
+                    total_banned = val_str.parse::<u32>().unwrap_or(0);
+                }
+            } else if lower.contains("banned ip list:") {
+                if let Some(pos) = lower.find("banned ip list:") {
+                    let val_str = trimmed[pos + "banned ip list:".len()..].trim();
+                    banned_ips = val_str
+                        .split_whitespace()
+                        .map(|s| s.trim_matches(',').to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                }
+            }
+        }
+
+        Fail2banJail {
+            name: name.to_string(),
+            currently_failed,
+            total_failed,
+            currently_banned,
+            total_banned,
+            file_list,
+            banned_ips,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_ignore_ips(jail_names: &[String]) -> Vec<String> {
+        use std::process::Command;
+        use std::fs;
+        use std::path::Path;
+
+        // Try getting from first active jail via client
+        if let Some(first_jail) = jail_names.first() {
+            if let Ok(out) = Command::new("fail2ban-client").args(["get", first_jail, "ignoreip"]).output() {
+                if out.status.success() {
+                    let raw = String::from_utf8_lossy(&out.stdout);
+                    let mut ips = Vec::new();
+                    for line in raw.lines() {
+                        let trimmed = line.trim().trim_start_matches(|c| c == '|' || c == '-' || c == '`' || c == ' ' || c == '\t');
+                        if !trimmed.is_empty() && !trimmed.to_lowercase().contains("ignored") {
+                            for part in trimmed.split_whitespace() {
+                                let clean = part.trim_matches(',');
+                                if !clean.is_empty() && !ips.contains(&clean.to_string()) {
+                                    ips.push(clean.to_string());
+                                }
+                            }
+                        }
+                    }
+                    if !ips.is_empty() {
+                        return ips;
+                    }
+                }
+            }
+        }
+
+        // Fallback: parse /etc/fail2ban/jail.local or /etc/fail2ban/jail.conf
+        for path_str in &["/etc/fail2ban/jail.local", "/etc/fail2ban/jail.conf"] {
+            let p = Path::new(path_str);
+            if p.exists() {
+                if let Ok(content) = fs::read_to_string(p) {
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("ignoreip") {
+                            if let Some(pos) = trimmed.find('=') {
+                                let ips_part = trimmed[pos + 1..].trim();
+                                let mut ips = Vec::new();
+                                for part in ips_part.split_whitespace() {
+                                    let clean = part.trim_matches(',');
+                                    if !clean.is_empty() && !ips.contains(&clean.to_string()) {
+                                        ips.push(clean.to_string());
+                                    }
+                                }
+                                if !ips.is_empty() {
+                                    return ips;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        vec!["127.0.0.1/8".to_string(), "::1".to_string()]
+    }
+
+    #[cfg(target_os = "linux")]
+    fn toggle_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::process::Command;
+        let req: TogglePayload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        let res = if req.enabled {
+            Command::new("systemctl")
+                .args(["enable", "--now", "fail2ban"])
+                .output()
+                .or_else(|_| Command::new("service").args(["fail2ban", "start"]).output())
+        } else {
+            Command::new("systemctl")
+                .args(["stop", "fail2ban"])
+                .output()
+                .or_else(|_| Command::new("service").args(["fail2ban", "stop"]).output())
+        };
+
+        match res {
+            Ok(o) if o.status.success() => {
+                CommandOutcome::ok(serde_json::json!({ "active": req.enabled }).to_string())
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                CommandOutcome::failed(format!("Failed to toggle fail2ban: {stderr} {stdout}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to execute toggle command: {e}")),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn unban_ip_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::process::Command;
+        let req: UnbanPayload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        let ip = req.ip.trim();
+        if ip.is_empty() {
+            return CommandOutcome::failed("IP address cannot be empty".to_string());
+        }
+
+        let jail = req.jail.as_deref().unwrap_or("").trim();
+
+        let mut success = false;
+        let mut last_err = String::new();
+
+        if !jail.is_empty() && jail != "all" {
+            // Unban in specific jail
+            let res = Command::new("fail2ban-client")
+                .args(["set", jail, "unbanip", ip])
+                .output();
+            match res {
+                Ok(o) if o.status.success() => {
+                    success = true;
+                }
+                Ok(o) => {
+                    last_err = format!("{} {}", String::from_utf8_lossy(&o.stderr), String::from_utf8_lossy(&o.stdout));
+                    // Try generic unban
+                    if let Ok(o2) = Command::new("fail2ban-client").args(["unban", ip]).output() {
+                        if o2.status.success() {
+                            success = true;
+                        }
+                    }
+                }
+                Err(e) => last_err = e.to_string(),
+            }
+        } else {
+            // Unban across all jails
+            let res = Command::new("fail2ban-client").args(["unban", ip]).output();
+            match res {
+                Ok(o) if o.status.success() => {
+                    success = true;
+                }
+                _ => {
+                    // Fallback: query jails and unban on each
+                    if let Ok(st) = Command::new("fail2ban-client").arg("status").output() {
+                        let st_str = String::from_utf8_lossy(&st.stdout);
+                        let jails = parse_jail_list(&st_str);
+                        for j in jails {
+                            let _ = Command::new("fail2ban-client").args(["set", &j, "unbanip", ip]).output();
+                        }
+                        success = true;
+                    }
+                }
+            }
+        }
+
+        if success {
+            CommandOutcome::ok(serde_json::json!({ "unbanned": ip, "jail": jail }).to_string())
+        } else {
+            CommandOutcome::failed(format!("Failed to unban IP {ip}: {last_err}"))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn ban_ip_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::process::Command;
+        let req: BanPayload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        let ip = req.ip.trim();
+        if ip.is_empty() {
+            return CommandOutcome::failed("IP address cannot be empty".to_string());
+        }
+
+        let jail = req.jail.as_deref().unwrap_or("sshd").trim();
+        let target_jail = if jail.is_empty() { "sshd" } else { jail };
+
+        let res = Command::new("fail2ban-client")
+            .args(["set", target_jail, "banip", ip])
+            .output();
+
+        match res {
+            Ok(o) if o.status.success() => {
+                CommandOutcome::ok(serde_json::json!({ "banned": ip, "jail": target_jail }).to_string())
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                CommandOutcome::failed(format!("Failed to ban IP {ip} in jail {target_jail}: {stderr} {stdout}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to execute fail2ban-client banip: {e}")),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_whitelist_linux(payload: serde_json::Value) -> CommandOutcome {
+        use std::fs;
+        use std::path::Path;
+        use std::process::Command;
+
+        let req: SetWhitelistPayload = match serde_json::from_value(payload) {
+            Ok(p) => p,
+            Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
+        };
+
+        let mut cleaned_ips = Vec::new();
+        // Always include localhost loopback
+        cleaned_ips.push("127.0.0.1/8".to_string());
+        cleaned_ips.push("::1".to_string());
+
+        for ip in req.ips {
+            let trimmed = ip.trim().to_string();
+            if !trimmed.is_empty() && !cleaned_ips.contains(&trimmed) {
+                cleaned_ips.push(trimmed);
+            }
+        }
+
+        let jail_local = Path::new("/etc/fail2ban/jail.local");
+        let ignoreip_line = format!("ignoreip = {}", cleaned_ips.join(" "));
+
+        let new_content = if jail_local.exists() {
+            let existing = fs::read_to_string(jail_local).unwrap_or_default();
+            let mut lines: Vec<String> = Vec::new();
+            let mut found_ignoreip = false;
+            let mut in_default = false;
+
+            for line in existing.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                    in_default = trimmed.eq_ignore_ascii_case("[default]");
+                }
+                if in_default && trimmed.starts_with("ignoreip") {
+                    lines.push(ignoreip_line.clone());
+                    found_ignoreip = true;
+                } else {
+                    lines.push(line.to_string());
+                }
+            }
+
+            if !found_ignoreip {
+                // Prepend or append to [DEFAULT]
+                if let Some(pos) = lines.iter().position(|l| l.trim().eq_ignore_ascii_case("[default]")) {
+                    lines.insert(pos + 1, ignoreip_line.clone());
+                } else {
+                    lines.insert(0, format!("[DEFAULT]\n{ignoreip_line}\n"));
+                }
+            }
+
+            lines.join("\n")
+        } else {
+            format!("[DEFAULT]\n{ignoreip_line}\n\n[sshd]\nenabled = true\n")
+        };
+
+        if let Err(e) = fs::write(jail_local, new_content) {
+            return CommandOutcome::failed(format!("Failed to write /etc/fail2ban/jail.local: {e}"));
+        }
+
+        // Reload fail2ban
+        let reload_res = Command::new("fail2ban-client").arg("reload").output();
+        match reload_res {
+            Ok(o) if o.status.success() => {
+                CommandOutcome::ok(serde_json::json!({ "success": true, "ignore_ips": cleaned_ips }).to_string())
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                CommandOutcome::failed(format!("Failed to reload fail2ban configuration: {stderr}"))
+            }
+            Err(e) => CommandOutcome::failed(format!("Failed to execute fail2ban-client reload: {e}")),
+        }
+    }
+}
+
 
