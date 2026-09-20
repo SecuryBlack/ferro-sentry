@@ -1,82 +1,82 @@
-# Ferro-Sentry
+# FerroSentry
 
-Agente de seguridad de servidor (EDR + Postura + Visibilidad) escrito en Rust. Corre dentro del servidor, detecta amenazas en tiempo real, audita la postura de seguridad y reporta a SecuryBlack Cloud.
+Host security and EDR agent (Endpoint Detection & Response + Security Posture + Visibility) written in pure Rust. Runs inside bare-metal servers and cloud instances, detects threats in real time, audits host security posture, and reports to SecuryBlack Cloud.
 
 [![Website](https://img.shields.io/badge/Website-ferrosentry.dev-F43F5E?style=flat-square)](https://ferrosentry.dev)
 [![Ecosystem](https://img.shields.io/badge/Ecosystem-SecuryBlack-33E1BF?style=flat-square)](https://securyblack.com)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 
-> **Parte del ecosistema SecuryBlack:**
-> [OxiPulse (Métricas)](https://github.com/securyblack/oxi-pulse) · **FerroSentry (Seguridad)** · [CupraFlow (Alta Disponibilidad)](https://github.com/securyblack/cupra-flow) · [CromoForge (GitOps)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
+> **Part of the SecuryBlack ecosystem:**
+> [OxiPulse (Metrics)](https://github.com/securyblack/oxi-pulse) · **FerroSentry (Security)** · [CupraFlow (High Availability)](https://github.com/securyblack/cupra-flow) · [CromoForge (GitOps)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
 
-> **Estado:** En producción — 9 módulos de auditoría funcionando (Fase 1 completa, partes de Fase 2 y 3). **Ya no es solo lectura** desde 2026-08-24: el intake de comandos permite remediación explícita (`os_upgrade`, opt-in vía `allow_remote_os_upgrade` en `config.toml`), primer paso de la Fase 3 de Hardening. El resto del roadmap (EDR en tiempo real, más hardening, respuesta automática) sigue en desarrollo activo.
-
----
-
-## 🛡️ Filosofía
-
-- **Rust nativo** por rendimiento, footprint mínimo y seguridad memory-safe.
-- **Módulos independientes**, cada sensor corre en su propia tarea `tokio`.
-- **Dos modos de salida:** a través de **Conduit** (túnel local) o **directo** a la API de SecuryBlack.
-- **Alertas en tiempo real** + **auditorías periódicas** programadas.
-- **Cross-platform** primero (Linux/Windows), luego macOS.
+> **Status:** Production-ready — 9 audit and posture modules active (Phase 1 complete, with core modules of Phase 2 and 3). Includes explicit command remediation (`os_upgrade`, opt-in via `allow_remote_os_upgrade` in `config.toml`) as the first step of Phase 3 Hardening. Active development continues on expanded real-time EDR and automated response capabilities.
 
 ---
 
-## 📋 Módulos y Funciones
+## 🛡️ Philosophy
 
-### 🔴 Módulos de Detección en Tiempo Real (EDR)
-
-| Módulo | Qué detecta |
-|--------|-------------|
-| **Process Sentinel** | Procesos nuevos, hijos de shells, ejecución desde `/tmp` o paths temporales, procesos sin padre, inyección de memoria, binarios borrados en ejecución (`/proc/[pid]/exe` dangling) |
-| **File Integrity Monitor (FIM)** | Modificaciones en `/etc/passwd`, binarios del sistema, configs críticas, certificados. Baseline de hashes SHA-256 con snapshot inicial. |
-| **Network Watch** | Conexiones outbound sospechosas, reverse shells, beaconing, escaneo interno, conexiones a IPs/tor/proxies conocidos. |
-| **Auth Guard** | Logins SSH fallidos, brute force, sudo abuse, nuevos usuarios, cambios de password, logins en horarios atípicos. |
-| **Persistence Hunter** | Nuevos cron jobs, servicios systemd, tareas programadas (Windows), registros de startup, `.bashrc`/`.profile` modificados, DLL hijacking (Windows). |
-| **Log Watcher** | Tail en tiempo real de logs del sistema (`auth.log`, `journald`, Windows Event Log) con reglas regex/YAML externas. |
-
-### 🔵 Módulos de Auditoría y Postura (CSPM ligero)
-
-| Módulo | Qué audita |
-|--------|------------|
-| **Port Scanner** | Puertos abiertos en interfaces locales, servicios escuchando en `0.0.0.0` sin necesidad, servicios en puertos no estándar. Escaneo SYN rápido de localhost. |
-| **Firewall Auditor** | Reglas de `iptables`/`nftables`/`ufw` (Linux) y Windows Firewall. Detecta reglas permisivas (`ANY/ANY`, `0.0.0.0/0`), reglas sin stateful inspection, denegaciones ausentes. |
-| **Vulnerability Scanner** | Versiones de software expuestas vs base de CVEs local (opcional), configs inseguras (SSH root login, TLS 1.0/1.1, SMBv1, etc.), parches de kernel pendientes. |
-| **SSL/TLS Auditor** | Certificados expirados, self-signed, configuraciones débiles (cifrados RC4/DES, DH small), certificados próximos a expirar. |
-| **SSH Auditor** | Configuración de `sshd`: `PermitRootLogin`, `PasswordAuthentication`, `Port 22`, `X11Forwarding`, `AllowUsers` ausente, versión obsoleta. |
-| **Permission Auditor** | Binarios SUID/SGID sospechosos, archivos world-writable en paths críticos, usuarios con UID 0 duplicados, grupos `sudo`/`wheel` no autorizados. |
-| **Secrets Hunter** | Credenciales hardcodeadas en archivos de config (`.env`, `.yml`, `.json`), API keys, private keys sin passphrase, tokens en logs. |
-| **Kernel Security** | Estado de mitigaciones (`ASLR`, `NX`, `seccomp`, `AppArmor`/`SELinux`, `KPTI`, `SMEP`/`SMAP`), kernel desactualizado. |
-| **Listening Services** | Servicios activos sin autenticación, bases de datos expuestas (`MongoDB`, `Redis`, `Elasticsearch` sin auth), servicios legacy (`Telnet`, `FTP`). |
-| **Container Security** | Contenedores Docker privilegiados, montajes de `/var/run/docker.sock`, imágenes desactualizadas, containers con `--net=host` innecesario, metadata abuse (`169.254.169.254`). |
-| **Backup Finder** | Backups expuestos (`.sql`, `.tar.gz`, `.zip`, `.bak`) en paths web accesibles o con permisos débiles. |
-| **Network Topology** | Interfaces en modo promiscuo, rutas estáticas sospechosas, tunnels no autorizados (WireGuard, OpenVPN, GRE), ARP spoofing. |
-| **Malware Scanner** | Scan con firmas YARA de directorios críticos (`/tmp`, `/var/tmp`, `$HOME`), IOCs (indicators of compromise) en disco. |
+- **Native Rust:** Maximum performance, minimal resource footprint (< 15 MB RAM), and guaranteed memory safety.
+- **Independent Modules:** Each security sensor runs inside its own isolated `tokio` async task.
+- **Dual Output Modes:** Transmits events locally via **Conduit / Nexus** (bidirectional tunnel) or **direct** to the SecuryBlack API.
+- **Real-Time Alerts + Scheduled Audits:** Combines event-driven threat detection with recurring posture scans.
+- **Cross-Platform:** Linux and Windows first-class support.
 
 ---
 
-## 🏗️ Arquitectura
+## 📋 Modules & Capabilities
+
+### 🔴 Real-Time Threat Detection (EDR)
+
+| Module | Detection Scope |
+|---|---|
+| **Process Sentinel** | Newly spawned processes, shell children, execution from `/tmp` or temp paths, orphaned processes, memory injection, running deleted binaries (`/proc/[pid]/exe` dangling). |
+| **File Integrity Monitor (FIM)** | Unauthorized changes to `/etc/passwd`, system binaries, critical configuration files, certificates. Cryptographic baseline tracking using SHA-256 snapshots. |
+| **Network Watch** | Suspicious outbound connections, reverse shells, C2 beaconing, internal network scanning, connections to known Tor/proxy/threat IPs. |
+| **Auth Guard** | Failed SSH logins, brute-force mitigation, sudo abuse, newly added user accounts, password modifications, off-hour authentications. |
+| **Persistence Hunter** | Unauthorized cron jobs, systemd services, Windows scheduled tasks, startup run keys, modified `.bashrc`/`.profile`, Windows DLL hijacking. |
+| **Log Watcher** | Real-time tailing of system logs (`auth.log`, `journald`, Windows Event Log) matching external YAML regex rules. |
+
+### 🔵 Posture & Hardening Audits (Light Host CSPM)
+
+| Module | Audit Scope |
+|---|---|
+| **Port Scanner** | Open ports on local interfaces, services listening on `0.0.0.0` unnecessarily, non-standard listening ports. Rapid SYN scan of localhost. |
+| **Firewall Auditor** | `iptables`/`nftables`/`ufw` (Linux) and Windows Firewall rule verification. Detects overly permissive rules (`ANY/ANY`, `0.0.0.0/0`), missing stateful inspection, missing default drop policies. |
+| **Vulnerability Scanner** | Installed software versions vs CVE database, insecure service configs (SSH root login, TLS 1.0/1.1, SMBv1), pending kernel security updates. |
+| **SSL/TLS Auditor** | Expired certificates, self-signed certs, weak cipher suites (RC4/DES, small DH parameters), certificates nearing expiration. |
+| **SSH Auditor** | Hardening audit of `sshd_config`: `PermitRootLogin`, `PasswordAuthentication`, non-standard port, `X11Forwarding`, missing `AllowUsers`, obsolete versions. |
+| **Permission Auditor** | Suspicious SUID/SGID binaries, world-writable files in critical system directories, duplicate UID 0 users, unauthorized `sudo`/`wheel` memberships. |
+| **Secrets Hunter** | Plaintext credentials in configuration files (`.env`, `.yml`, `.json`), API keys, unencrypted private keys, tokens leaked into log files. |
+| **Kernel Security** | Kernel mitigation status (`ASLR`, `NX`, `seccomp`, `AppArmor`/`SELinux`, `KPTI`, `SMEP`/`SMAP`), unpatched kernel vulnerabilities. |
+| **Listening Services** | Unauthenticated services, exposed databases (`MongoDB`, `Redis`, `Elasticsearch` without auth), legacy plaintext protocols (`Telnet`, `FTP`). |
+| **Container Security** | Privileged Docker containers, exposed `/var/run/docker.sock`, outdated base images, containers with `--net=host`, cloud metadata abuse (`169.254.169.254`). |
+| **Backup Finder** | Exposed database dumps (`.sql`, `.tar.gz`, `.zip`, `.bak`) stored in public web paths or with weak file permissions. |
+| **Network Topology** | Interfaces running in promiscuous mode, suspicious static routes, unauthorized overlay tunnels (WireGuard, OpenVPN, GRE), ARP spoofing. |
+| **Malware Scanner** | YARA signature scanning across critical temporary directories (`/tmp`, `/var/tmp`, `$HOME`), known disk IoCs. |
+
+---
+
+## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    SECURYBLACK CLOUD                                         │
+│                            SECURYBLACK CLOUD                                │
 │  ┌──────────────┐      ┌──────────────────────────────┐                     │
 │  │  Dashboard   │◄─────┤  Security Events API         │                     │
-│  │  (alertas)   │      │  / Posture API               │                     │
+│  │  (Alerts)    │      │  / Posture Findings API      │                     │
 │  └──────────────┘      └──────────────────────────────┘                     │
 └─────────────────────────────────────────────────────────────────────────────┘
-                              ▲
-                              │ Security Events (JSON/OTLP Logs)
+                               ▲
+                               │ Security Events (JSON / OTLP Logs)
                     ┌─────────┴──────────┐
-                    │   Conduit (túnel)  │   ← default
+                    │  Conduit / Tunnel  │   ← default
                     └─────────┬──────────┘
 ┌─────────────────────────────┼───────────────────────────────┐
-│     SERVIDOR DEL CLIENTE    │                               │
+│     CLIENT SERVER           │                               │
 │                             │                               │
 │  ┌──────────────────────────┴─────────────────────────┐     │
-│  │  Ferro-Sentry (Servicio Rust)                       │     │
+│  │  FerroSentry (Rust Daemon)                         │     │
 │  │                                                    │     │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌────────────┐ │     │
 │  │  │ REAL-TIME   │  │ AUDIT       │  │ SCHEDULER  │ │     │
@@ -92,24 +92,24 @@ Agente de seguridad de servidor (EDR + Postura + Visibilidad) escrito en Rust. C
 │  │         └─────────────────┴───────────────┘        │     │
 │  │  ┌────────────────────────────────────────────────┐ │     │
 │  │  │           EVENT ENGINE                         │ │     │
-│  │  │  • Deduplicación (ventana 5min)               │ │     │
-│  │  │  • Enriquecimiento (host, user, hash, geo)    │ │     │
-│  │  │  • Severity scoring                           │ │     │
-│  │  │  • Throttling / rate limiting                 │ │     │
+│  │  │  • Deduplication (5-minute sliding window)     │ │     │
+│  │  │  • Enrichment (host, user, SHA-256 hash, geo)  │ │     │
+│  │  │  • Severity scoring                            │ │     │
+│  │  │  • Throttling / rate limiting                  │ │     │
 │  │  └────────────────────┬───────────────────────────┘ │     │
 │  │  ┌────────────────────┴───────────────────────────┐ │     │
 │  │  │           OUTPUT LAYER                         │ │     │
-│  │  │  → Conduit local (gRPC/HTTP)    [default]     │ │     │
-│  │  │  → Directo a API SB (reqwest)   [fallback]    │ │     │
-│  │  │  → Archivo local JSONL          [debug]       │ │     │
+│  │  │  → Local Conduit (gRPC / HTTP)   [default]     │ │     │
+│  │  │  → Direct SecuryBlack API        [fallback]    │ │     │
+│  │  │  → Local JSONL Log File          [debug]       │ │     │
 │  │  └────────────────────────────────────────────────┘ │     │
 │  └─────────────────────────────────────────────────────┘     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Tipos de Eventos
+### Event Payload Formats
 
-**Security Event** (alerta en tiempo real):
+**Security Event** (Real-time alert):
 ```json
 {
   "event_type": "process_spawn",
@@ -131,7 +131,7 @@ Agente de seguridad de servidor (EDR + Postura + Visibilidad) escrito en Rust. C
 }
 ```
 
-**Posture Finding** (hallazgo de auditoría):
+**Posture Finding** (Audit scan finding):
 ```json
 {
   "event_type": "finding",
@@ -152,178 +152,64 @@ Agente de seguridad de servidor (EDR + Postura + Visibilidad) escrito en Rust. C
 
 ---
 
-## 🦀 Stack Tecnológico Rust
+## 🚀 Quickstart & Installation
 
-| Capa | Crate |
-|------|-------|
+### Linux — One-line Install
+```bash
+curl -fsSL https://install.ferrosentry.dev | sudo bash
+```
+
+### Windows — PowerShell (Administrator)
+```powershell
+irm https://install.ferrosentry.dev | iex
+```
+
+### Standalone Interactive TUI
+Inspect security posture, active alerts, and firewall rules in real time without needing a cloud connection:
+```bash
+ferrosentry tui
+```
+
+---
+
+## 🦀 Rust Technology Stack
+
+| Layer | Crate |
+|---|---|
 | Async runtime | `tokio` (full) |
 | Logging / tracing | `tracing` + `tracing-subscriber` + `tracing-appender` |
-| Serialización | `serde` + `serde_json` + `serde_yaml` (reglas) + `chrono` |
-| Procesos / sistema | `sysinfo` |
-| File system events | `notify` (inotify, fsevents, ReadDirectoryChangesW) |
-| Hashes (FIM) | `sha2` + `hex` |
-| Regex | `regex` |
-| Usuarios del sistema | `uzers` |
+| Serialization | `serde` + `serde_json` + `serde_yaml` (detection rules) + `chrono` |
+| System processes | `sysinfo` |
+| File system monitoring | `notify` (inotify, ReadDirectoryChangesW) |
+| Hashing (FIM) | `sha2` + `hex` |
+| Pattern matching | `regex` |
+| Unix accounts | `uzers` |
 | Windows APIs | `windows` + `winreg` |
 | HTTP client | `reqwest` |
 | gRPC / OTLP Logs | `tonic` + `opentelemetry` + `opentelemetry-otlp` |
-| Scanning de red | `tokio::net` + raw sockets (libpcap vía `pnet` opcional) |
-| YARA | `yara` / `yara-sys` (opcional) |
-| Auto-update | `self_update` |
-| Windows service | `windows-service` |
-| Config | `toml` + `serde` |
+| Network inspection | `tokio::net` + raw sockets |
+| Malware inspection | `yara` (optional) |
+| Terminal UI | `ratatui` + `crossterm` |
+| Configuration | `toml` + `serde` |
 
 ---
 
-## 📁 Estructura del Proyecto
+## 🌐 SecuryBlack Open Source Ecosystem
 
-```
-ferro-sentry/
-├── Cargo.toml
-├── rules/                          ← Reglas de detección (YAML)
-│   ├── process_rules.yaml
-│   ├── network_rules.yaml
-│   ├── log_rules.yaml
-│   └── audit_profiles.yaml         ← Perfiles de auditoría (CIS lite)
-├── src/
-│   ├── main.rs                     # Entry point, service wrapper
-│   ├── config.rs                   # Config TOML + env vars
-│   ├── scheduler.rs                # Programación de scans periódicos
-│   ├── engine/
-│   │   ├── mod.rs                  # Event Engine central
-│   │   ├── dedup.rs                # Deduplicación por firma
-│   │   ├── enrich.rs               # Enriquecimiento de eventos
-│   │   ├── severity.rs             # Scoring
-│   │   └── throttle.rs             # Rate limiting
-│   ├── modules/
-│   │   ├── mod.rs
-│   │   ├── process_sentinel.rs
-│   │   ├── file_integrity.rs
-│   │   ├── network_watch.rs
-│   │   ├── auth_guard.rs
-│   │   ├── persistence_hunter.rs
-│   │   ├── log_watcher.rs
-│   │   ├── port_scanner.rs
-│   │   ├── firewall_auditor.rs
-│   │   ├── vuln_scanner.rs
-│   │   ├── ssl_auditor.rs
-│   │   ├── ssh_auditor.rs
-│   │   ├── permission_auditor.rs
-│   │   ├── secrets_hunter.rs
-│   │   ├── kernel_security.rs
-│   │   ├── listening_services.rs
-│   │   ├── container_security.rs
-│   │   ├── backup_finder.rs
-│   │   ├── network_topology.rs
-│   │   └── malware_scanner.rs
-│   ├── output/
-│   │   ├── mod.rs                  # Trait Output
-│   │   ├── conduit.rs              # Default: vía Conduit
-│   │   ├── direct.rs               # Fallback: HTTP directo
-│   │   └── local_file.rs           # Debug: JSONL local
-│   └── updater/
-│       └── mod.rs
-├── scripts/
-│   ├── install.sh
-│   └── install.ps1
-└── .github/
-    └── workflows/
-        └── release.yml
-```
+FerroSentry is the security and EDR pillar of the SecuryBlack modular agent suite:
 
----
-
-## 📅 Roadmap
-
-### Fase 0 — Fundación
-- [x] Repo, CI/CD cross-platform, config, logging, output layer.
-- [ ] Event Engine (deduplicación, severidad, throttling). — dedup y severidad implementados; throttling sigue siendo un `TODO` en `engine/mod.rs`.
-- [x] Integración con Conduit (default) y fallback directo.
-
-### Fase 1 — Visibilidad Básica (CIS Lite)
-- [x] **Port Scanner** — Escaneo local de puertos abiertos.
-- [x] **Listening Services** — Servicios activos y su exposición.
-- [x] **Firewall Auditor** — Reglas de iptables/nftables/Windows Firewall.
-- [x] **SSL/TLS Auditor** — Certificados expirados/débiles.
-- [x] **SSH Auditor** — Configuración insegura de sshd.
-- [x] **Permission Auditor** — SUID binaries, world-writable files.
-
-### Fase 2 — Detección en Tiempo Real (EDR Core)
-- [x] **File Integrity Monitor (FIM)** — Baseline + watcher en tiempo real.
-- [x] **Process Sentinel** — Procesos nuevos, árboles sospechosos.
-- [ ] **Auth Guard** — Logins fallidos, brute force, sudo.
-- [ ] **Log Watcher** — Tail de logs con reglas regex.
-
-### Fase 3 — Postura y Hardening
-- [x] **Vulnerability Scanner** — Versiones vs CVEs, parches pendientes. Detección endurecida
-      2026-08-24: origen real de seguridad (no substring del nombre del paquete), `dist-upgrade`
-      en vez de `upgrade` para no subestimar el total, reboot-required, edad de caché de apt.
-- [x] **Remediación `os_upgrade`** — Hecho 2026-08-24: `management/commands.rs`, handler
-      registrado en el intake de comandos (`sb_agent_core::command_intake`, ver
-      `D:\infra\docs\design-command-intake.md`). Solo Linux/apt por ahora (dnf/yum
-      responden "not implemented"). `mode: "security_only"|"all"`, reinicio nunca automático
-      salvo `allow_reboot: true` explícito en el comando, y sujeto siempre a
-      `allow_remote_os_upgrade` en `config.toml` (`false` por defecto — opt-in del cliente,
-      independiente de que la nube lo ofrezca). Funciona igual si el intake lo dispara nexus
-      (reenviado desde el túnel) o un llamante local — es la pieza que hace que FerroSentry
-      pueda remediar sin nube, no solo detectar.
-- [ ] **Secrets Hunter** — API keys, credenciales en config.
-- [ ] **Kernel Security** — ASLR, SELinux/AppArmor, seccomp.
-- [x] **Persistence Hunter** — Cron, systemd, startup.
-- [ ] **Network Watch** — Conexiones outbound sospechosas.
-
-### Fase 4 — Container, Cloud & Malware
-- [ ] **Container Security** — Docker privileged, sockets, metadata abuse.
-- [ ] **Backup Finder** — Backups expuestos en paths web.
-- [ ] **Network Topology** — Promiscuous mode, tunnels no autorizados.
-- [ ] **Malware Scanner** — YARA scanning de directorios críticos.
-
-### Fase 5 — Inteligencia y Respuesta
-- [ ] **Anomaly Baseline** — Aprendizaje de comportamiento normal.
-- [ ] **Threat Intelligence** — Matching de IoCs (IPs, hashes, dominios).
-- [ ] **Respuesta Automática** — Kill process, aislar red, bloquear IP (opt-in).
-
----
-
-## 🔗 Integración con OxiPulse y Conduit
-
-| Agente | Rol | Protocolo de salida |
-|--------|-----|---------------------|
-| **OxiPulse** | Monitorización de salud del sistema (CPU, RAM, disco, red) | OTLP Metrics → gRPC (directo o vía Conduit) |
-| **Ferro-Sentry** | Seguridad del endpoint (EDR + postura) | Security Events JSON / OTLP Logs → Conduit o directo |
-| **Conduit** | Túnel y orquestador de agentes SB | Túnel bidireccional gRPC con SB Cloud |
-
-Ferro-Sentry se registra automáticamente en Conduit si está presente. Si no, usa `reqwest` directo.
-
----
-
-## ❓ Decisiones Pendientes
-
-1. **Base de CVEs:** ¿Incluimos una base local de CVEs (vulns.json) o consultamos API externa?
-2. **YARA:** ¿Incluimos reglas YARA por defecto o es opt-in por tamaño?
-3. **Respuesta automática:** ¿Fase 5 o nunca? Es peligroso en producción.
-4. **Windows Event Log:** ¿Usamos crate `windows` directo o biblioteca como `winevt`?
-
----
-
-## 🌐 Ecosistema Open Source de SecuryBlack
-
-FerroSentry es el pilar de seguridad y EDR dentro de la suite de agentes modulares de SecuryBlack:
-
-| Agente | Enfoque Principal | Web Oficial | Repositorio |
+| Agent | Core Focus | Official Website | Repository |
 | :--- | :--- | :--- | :--- |
-| **OxiPulse** | Telemetría, métricas OTLP y logs sin overhead | [oxipulse.dev](https://oxipulse.dev) | [securyblack/oxi-pulse](https://github.com/securyblack/oxi-pulse) |
-| **FerroSentry** | EDR ligero, auditd, detección de fuerza bruta y firewall | [ferrosentry.dev](https://ferrosentry.dev) | [securyblack/ferro-sentry](https://github.com/securyblack/ferro-sentry) |
-| **CupraFlow** | Alta disponibilidad, IP flotante VIP y balanceo de tráfico | [cupraflow.dev](https://cupraflow.dev) | [securyblack/cupra-flow](https://github.com/securyblack/cupra-flow) |
-| **CromoForge** | Despliegues continuos, GitOps y gestión de contenedores | [cromoforge.dev](https://cromoforge.dev) | [securyblack/cromo-forge](https://github.com/securyblack/cromo-forge) |
-| **TitanVault** | Copias de seguridad en streaming y recuperación ante desastres | [titanvault.dev](https://titanvault.dev) | [securyblack/titan-vault](https://github.com/securyblack/titan-vault) |
+| **OxiPulse** | Telemetry, OTLP metrics, and zero-overhead vital signs | [oxipulse.dev](https://oxipulse.dev) | [securyblack/oxi-pulse](https://github.com/securyblack/oxi-pulse) |
+| **FerroSentry** | Lightweight EDR, auditd, brute-force mitigation & firewall | [ferrosentry.dev](https://ferrosentry.dev) | [securyblack/ferro-sentry](https://github.com/securyblack/ferro-sentry) |
+| **CupraFlow** | High availability, floating VIP failover & traffic balancing | [cupraflow.dev](https://cupraflow.dev) | [securyblack/cupra-flow](https://github.com/securyblack/cupra-flow) |
+| **CromoForge** | Continuous delivery, GitOps & container management | [cromoforge.dev](https://cromoforge.dev) | [securyblack/cromo-forge](https://github.com/securyblack/cromo-forge) |
+| **TitanVault** | Zero-disk streaming backups & disaster recovery | [titanvault.dev](https://titanvault.dev) | [securyblack/titan-vault](https://github.com/securyblack/titan-vault) |
 
-Todos los agentes pueden gestionarse de forma centralizada y visual conectándolos a [SecuryBlack Cloud](https://securyblack.com).
+All agents can be centrally managed with unified observability by connecting them to [SecuryBlack Cloud](https://securyblack.com).
 
 ---
 
 ## License
 
 FerroSentry is licensed under the [Apache License, Version 2.0](LICENSE).
-
-
