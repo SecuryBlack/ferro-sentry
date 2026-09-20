@@ -2,6 +2,14 @@
 
 Agente de seguridad de servidor (EDR + Postura + Visibilidad) escrito en Rust. Corre dentro del servidor, detecta amenazas en tiempo real, audita la postura de seguridad y reporta a SecuryBlack Cloud.
 
+[![Website](https://img.shields.io/badge/Website-ferrosentry.dev-F43F5E?style=flat-square)](https://ferrosentry.dev)
+[![Ecosystem](https://img.shields.io/badge/Ecosystem-SecuryBlack-33E1BF?style=flat-square)](https://securyblack.com)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
+
+> **Parte del ecosistema SecuryBlack:**
+> [OxiPulse (Métricas)](https://github.com/securyblack/oxi-pulse) · **FerroSentry (Seguridad)** · [CupraFlow (Alta Disponibilidad)](https://github.com/securyblack/cupra-flow) · [CromoForge (GitOps)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
+
 > **Estado:** En producción — 9 módulos de auditoría funcionando (Fase 1 completa, partes de Fase 2 y 3). **Ya no es solo lectura** desde 2026-08-24: el intake de comandos permite remediación explícita (`os_upgrade`, opt-in vía `allow_remote_os_upgrade` en `config.toml`), primer paso de la Fase 3 de Hardening. El resto del roadmap (EDR en tiempo real, más hardening, respuesta automática) sigue en desarrollo activo.
 
 ---
@@ -295,6 +303,22 @@ Ferro-Sentry se registra automáticamente en Conduit si está presente. Si no, u
 2. **YARA:** ¿Incluimos reglas YARA por defecto o es opt-in por tamaño?
 3. **Respuesta automática:** ¿Fase 5 o nunca? Es peligroso en producción.
 4. **Windows Event Log:** ¿Usamos crate `windows` directo o biblioteca como `winevt`?
+
+---
+
+## 🌐 Ecosistema Open Source de SecuryBlack
+
+FerroSentry es el pilar de seguridad y EDR dentro de la suite de agentes modulares de SecuryBlack:
+
+| Agente | Enfoque Principal | Web Oficial | Repositorio |
+| :--- | :--- | :--- | :--- |
+| **OxiPulse** | Telemetría, métricas OTLP y logs sin overhead | [oxipulse.dev](https://oxipulse.dev) | [securyblack/oxi-pulse](https://github.com/securyblack/oxi-pulse) |
+| **FerroSentry** | EDR ligero, auditd, detección de fuerza bruta y firewall | [ferrosentry.dev](https://ferrosentry.dev) | [securyblack/ferro-sentry](https://github.com/securyblack/ferro-sentry) |
+| **CupraFlow** | Alta disponibilidad, IP flotante VIP y balanceo de tráfico | [cupraflow.dev](https://cupraflow.dev) | [securyblack/cupra-flow](https://github.com/securyblack/cupra-flow) |
+| **CromoForge** | Despliegues continuos, GitOps y gestión de contenedores | [cromoforge.dev](https://cromoforge.dev) | [securyblack/cromo-forge](https://github.com/securyblack/cromo-forge) |
+| **TitanVault** | Copias de seguridad en streaming y recuperación ante desastres | [titanvault.dev](https://titanvault.dev) | [securyblack/titan-vault](https://github.com/securyblack/titan-vault) |
+
+Todos los agentes pueden gestionarse de forma centralizada y visual conectándolos a [SecuryBlack Cloud](https://securyblack.com).
 
 ---
 
