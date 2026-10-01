@@ -1,6 +1,16 @@
 # FerroSentry
 
-Host security and EDR agent (Endpoint Detection & Response + Security Posture + Visibility) written in pure Rust. Runs inside bare-metal servers and cloud instances, detects threats in real time, audits host security posture, and reports to SecuryBlack Cloud.
+Open source Rust agent for host security auditing, findings and explicitly requested remediation. Reports to SecuryBlack Cloud through the supported transport configuration.
+
+## Use with SecuryBlack
+
+SecuryBlack is a hosted panel for server metrics, security findings and alerts. This repository contains the native agent; the hosted panel is a separate part of the product.
+
+[Watch the 42-second product demo](https://securyblack.com/en?utm_source=github&utm_medium=referral&utm_campaign=agent_readme&utm_content=ferro-sentry#how-it-works) · [Open the hosted panel](https://app.securyblack.com) · [Installation documentation](https://securyblack.com/en/docs/installation)
+
+[![SecuryBlack product demo](https://securyblack.com/videos/securyblack-launch-en.png)](https://securyblack.com/en?utm_source=github&utm_medium=referral&utm_campaign=agent_readme&utm_content=ferro-sentry#how-it-works)
+
+Follow the agent-specific installation and configuration instructions below. Use the hosted panel to obtain connection settings for your server.
 
 [![Website](https://img.shields.io/badge/Website-ferrosentry.dev-F43F5E?style=flat-square)](https://ferrosentry.dev)
 [![Ecosystem](https://img.shields.io/badge/Ecosystem-SecuryBlack-33E1BF?style=flat-square)](https://securyblack.com)
@@ -8,15 +18,15 @@ Host security and EDR agent (Endpoint Detection & Response + Security Posture + 
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 
 > **Part of the SecuryBlack ecosystem:**
-> [OxiPulse (Metrics)](https://github.com/securyblack/oxi-pulse) · **FerroSentry (Security)** · [CupraFlow (High Availability)](https://github.com/securyblack/cupra-flow) · [CromoForge (GitOps)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
+> [OxiPulse (Metrics)](https://github.com/securyblack/oxi-pulse) · **FerroSentry (Security)** · [CupraFlow (Networking/HA development)](https://github.com/securyblack/cupra-flow) · [CromoForge (Docker/PostgreSQL)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
 
-> **Status:** Production-ready — 9 audit and posture modules active (Phase 1 complete, with core modules of Phase 2 and 3). Includes explicit command remediation (`os_upgrade`, opt-in via `allow_remote_os_upgrade` in `config.toml`) as the first step of Phase 3 Hardening. Active development continues on expanded real-time EDR and automated response capabilities.
+> **Scope:** Audit and command-handling code is implemented. Remediation requires an explicit action and applicable configuration safeguards. Expanded EDR and automated response descriptions are development references, not a guarantee that every capability below is available.
 
 ---
 
 ## 🛡️ Philosophy
 
-- **Native Rust:** Maximum performance, minimal resource footprint (< 15 MB RAM), and guaranteed memory safety.
+- **Native Rust:** Native implementation focused on efficient resource use. Resource consumption depends on the workload; no benchmark is asserted here.
 - **Independent Modules:** Each security sensor runs inside its own isolated `tokio` async task.
 - **Dual Output Modes:** Transmits events locally via **Conduit / Nexus** (bidirectional tunnel) or **direct** to the SecuryBlack API.
 - **Real-Time Alerts + Scheduled Audits:** Combines event-driven threat detection with recurring posture scans.
@@ -200,11 +210,11 @@ FerroSentry is the security and EDR pillar of the SecuryBlack modular agent suit
 
 | Agent | Core Focus | Official Website | Repository |
 | :--- | :--- | :--- | :--- |
-| **OxiPulse** | Telemetry, OTLP metrics, and zero-overhead vital signs | [oxipulse.dev](https://oxipulse.dev) | [securyblack/oxi-pulse](https://github.com/securyblack/oxi-pulse) |
+| **OxiPulse** | Server telemetry and OTLP metrics | [oxipulse.dev](https://oxipulse.dev) | [securyblack/oxi-pulse](https://github.com/securyblack/oxi-pulse) |
 | **FerroSentry** | Lightweight EDR, auditd, brute-force mitigation & firewall | [ferrosentry.dev](https://ferrosentry.dev) | [securyblack/ferro-sentry](https://github.com/securyblack/ferro-sentry) |
-| **CupraFlow** | High availability, floating VIP failover & traffic balancing | [cupraflow.dev](https://cupraflow.dev) | [securyblack/cupra-flow](https://github.com/securyblack/cupra-flow) |
-| **CromoForge** | Continuous delivery, GitOps & container management | [cromoforge.dev](https://cromoforge.dev) | [securyblack/cromo-forge](https://github.com/securyblack/cromo-forge) |
-| **TitanVault** | Zero-disk streaming backups & disaster recovery | [titanvault.dev](https://titanvault.dev) | [securyblack/titan-vault](https://github.com/securyblack/titan-vault) |
+| **CupraFlow** | Networking/HA development (not operationally verified) | [cupraflow.dev](https://cupraflow.dev) | [securyblack/cupra-flow](https://github.com/securyblack/cupra-flow) |
+| **CromoForge** | Docker containers, logs & PostgreSQL management | [cromoforge.dev](https://cromoforge.dev) | [securyblack/cromo-forge](https://github.com/securyblack/cromo-forge) |
+| **TitanVault** | Streaming backups (restore workflow not verified) | [titanvault.dev](https://titanvault.dev) | [securyblack/titan-vault](https://github.com/securyblack/titan-vault) |
 
 All agents can be centrally managed with unified observability by connecting them to [SecuryBlack Cloud](https://securyblack.com).
 
@@ -213,3 +223,7 @@ All agents can be centrally managed with unified observability by connecting the
 ## License
 
 FerroSentry is licensed under the [Apache License, Version 2.0](LICENSE).
+
+## Maintainer context (workspace)
+
+English is the primary language for this repository's public documentation. Shared product decisions, commercial terms and the backlog live in the [workspace wiki](../sb-wiki/Índice.md), [current state](../sb-wiki/Producto/Estado%20actual.md) and [product log](../sb-wiki/Producto/Bitácora.md). These links require `sb-wiki` as a sibling checkout. Keep agent-specific usage and technical contracts here; update shared decisions in the wiki.
