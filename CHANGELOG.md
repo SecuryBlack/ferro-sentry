@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.26] - 2026-10-14
+
+### Security
+- **Auto-update**: Only installs ed25519-signed releases (`sb-agent-core` 0.3).
+
 ## [0.2.25] - 2026-09-16
 
 ### Added
@@ -62,7 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Process Sentinel**: Consolidate findings by executable path and add scan cache reset.
 
-[Unreleased]: https://github.com/SecuryBlack/ferro-sentry/compare/v0.2.25...HEAD
+[Unreleased]: https://github.com/SecuryBlack/ferro-sentry/compare/v0.2.26...HEAD
+[0.2.26]: https://github.com/SecuryBlack/ferro-sentry/compare/v0.2.25...v0.2.26
 [0.2.25]: https://github.com/SecuryBlack/ferro-sentry/compare/v0.2.24...v0.2.25
 [0.2.24]: https://github.com/SecuryBlack/ferro-sentry/compare/v0.2.23...v0.2.24
 [0.2.23]: https://github.com/SecuryBlack/ferro-sentry/compare/v0.2.22...v0.2.23
