@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.27] - 2026-10-15
+
+### Changed
+- No functional changes. First release that agents on 0.2.26 install through the signature-verifying updater.
+
 ## [0.2.26] - 2026-10-14
 
 ### Security
