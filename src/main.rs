@@ -67,6 +67,10 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
     sb_agent_core::command_intake::spawn_server(
         command_registry,
         sb_agent_core::command_intake::default_socket_path("ferro-sentry"),
+        sb_agent_core::command_intake::SigningContext {
+            server_token: cfg.token.clone(),
+            target_agent: "ferrosentry".into(),
+        },
     );
 
     // Iniciar chequeo diario de actualizaciones en segundo plano.
