@@ -64,10 +64,7 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
         // Emit consolidated events for temporary directory executables
         for (exe_path, mut pids) in temp_exec_map {
             pids.sort();
-            let safe_suffix = exe_path
-                .replace('/', "_")
-                .replace('.', "_")
-                .replace('-', "_");
+            let safe_suffix = exe_path.replace(['/', '.', '-'], "_");
             let rule = format!("proc_temp_exec_{}", safe_suffix);
             current_rules.insert(rule.clone());
 
@@ -103,10 +100,7 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
         // Emit consolidated events for deleted binaries
         for (exe_path, mut pids) in deleted_bin_map {
             pids.sort();
-            let safe_suffix = exe_path
-                .replace('/', "_")
-                .replace('.', "_")
-                .replace('-', "_");
+            let safe_suffix = exe_path.replace(['/', '.', '-'], "_");
             let rule = format!("proc_deleted_bin_{}", safe_suffix);
             current_rules.insert(rule.clone());
 
