@@ -18,7 +18,7 @@ Follow the agent-specific installation and configuration instructions below. Use
 [![Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 
 > **Part of the SecuryBlack ecosystem:**
-> [OxiPulse (Metrics)](https://github.com/securyblack/oxi-pulse) · **FerroSentry (Security)** · [CupraFlow (Networking/HA development)](https://github.com/securyblack/cupra-flow) · [CromoForge (Docker/PostgreSQL)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
+> [OxiPulse (Metrics)](https://github.com/securyblack/oxi-pulse) · **FerroSentry (Security)** · [CromoForge (Docker/PostgreSQL)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
 
 > **Scope:** Audit and command-handling code is implemented. Remediation requires an explicit action and applicable configuration safeguards. Expanded EDR and automated response descriptions are development references, not a guarantee that every capability below is available.
 
@@ -212,7 +212,6 @@ FerroSentry is the security and EDR pillar of the SecuryBlack modular agent suit
 | :--- | :--- | :--- | :--- |
 | **OxiPulse** | Server telemetry and OTLP metrics | [oxipulse.dev](https://oxipulse.dev) | [securyblack/oxi-pulse](https://github.com/securyblack/oxi-pulse) |
 | **FerroSentry** | Lightweight EDR, auditd, brute-force mitigation & firewall | [ferrosentry.dev](https://ferrosentry.dev) | [securyblack/ferro-sentry](https://github.com/securyblack/ferro-sentry) |
-| **CupraFlow** | Networking/HA development (not operationally verified) | [cupraflow.dev](https://cupraflow.dev) | [securyblack/cupra-flow](https://github.com/securyblack/cupra-flow) |
 | **CromoForge** | Docker containers, logs & PostgreSQL management | [cromoforge.dev](https://cromoforge.dev) | [securyblack/cromo-forge](https://github.com/securyblack/cromo-forge) |
 | **TitanVault** | Streaming backups (restore workflow not verified) | [titanvault.dev](https://titanvault.dev) | [securyblack/titan-vault](https://github.com/securyblack/titan-vault) |
 
@@ -223,7 +222,3 @@ All agents can be centrally managed with unified observability by connecting the
 ## License
 
 FerroSentry is licensed under the [Apache License, Version 2.0](LICENSE).
-
-## Maintainer context (workspace)
-
-English is the primary language for this repository's public documentation. Shared product decisions, commercial terms and the backlog live in the [workspace wiki](../sb-wiki/Índice.md), [current state](../sb-wiki/Producto/Estado%20actual.md) and [product log](../sb-wiki/Producto/Bitácora.md). These links require `sb-wiki` as a sibling checkout. Keep agent-specific usage and technical contracts here; update shared decisions in the wiki.
