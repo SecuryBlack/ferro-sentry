@@ -2461,7 +2461,8 @@ mod fail2ban {
                 .to_string();
             let jail = extract_jail_from_line(trimmed).unwrap_or_else(|| "sshd".to_string());
             ("unban".to_string(), ip, jail)
-        } else if let Some(pos) = trimmed.find("Found ") {
+        } else {
+            let pos = trimmed.find("Found ")?;
             let rest = trimmed[pos + 6..].trim();
             let ip = rest
                 .split_whitespace()
@@ -2470,8 +2471,6 @@ mod fail2ban {
                 .to_string();
             let jail = extract_jail_from_line(trimmed).unwrap_or_else(|| "sshd".to_string());
             ("found".to_string(), ip, jail)
-        } else {
-            return None;
         };
 
         // Extract timestamp (either first 19 chars "YYYY-MM-DD HH:MM:SS" or first 15 chars syslog)
