@@ -165,9 +165,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
         // Auto-resolución: si una regla de proceso detectada en el escaneo anterior
         // ya no está presente (todos los procesos de ese ejecutable murieron o se reiniciaron),
         // emitir un evento 'resolved' para que se cierre el hallazgo activo en la base de datos.
-        let mut prev_lock = PREVIOUS_PROCESS_RULES.lock().unwrap();
-        if let Some(ref prev) = *prev_lock {
-            for old_rule in prev {
+        // El lock no puede cruzar el .await: se saca el valor y se suelta.
+        let prev = PREVIOUS_PROCESS_RULES.lock().unwrap().take();
+        if let Some(prev) = prev {
+            for old_rule in &prev {
                 if !current_rules.contains(old_rule) {
                     findings.push(
                         engine
@@ -177,7 +178,7 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                 }
             }
         }
-        *prev_lock = Some(current_rules);
+        *PREVIOUS_PROCESS_RULES.lock().unwrap() = Some(current_rules);
     }
 
     let _ = engine;

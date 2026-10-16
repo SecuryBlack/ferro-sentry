@@ -51,7 +51,7 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
         } else if has_command("iptables") {
             // Check default INPUT policy
             if let Ok(output) = Command::new("iptables")
-                .args(&["-L", "INPUT", "-n"])
+                .args(["-L", "INPUT", "-n"])
                 .output()
             {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -105,7 +105,7 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
         {
             let mut docker_user_configured = false;
             if let Ok(output) = Command::new("iptables")
-                .args(&["-S", "DOCKER-USER"])
+                .args(["-S", "DOCKER-USER"])
                 .output()
             {
                 let s = String::from_utf8_lossy(&output.stdout);
@@ -127,7 +127,7 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
 
             let mut exposed_ports: Vec<String> = Vec::new();
             if let Ok(output) = Command::new("docker")
-                .args(&["ps", "--format", "{{.Names}}: {{.Ports}}"])
+                .args(["ps", "--format", "{{.Names}}: {{.Ports}}"])
                 .output()
             {
                 let s = String::from_utf8_lossy(&output.stdout);

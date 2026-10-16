@@ -256,7 +256,7 @@ fn check_apt_updates() -> Result<(usize, usize, String)> {
     // requieren instalar o quitar dependencias, así que subestima el total
     // real de pendientes. Sigue siendo una simulación (`-s`), no toca nada.
     let output = Command::new("apt-get")
-        .args(&["-s", "dist-upgrade"])
+        .args(["-s", "dist-upgrade"])
         .env("LANG", "C")
         .output()?;
 
@@ -347,7 +347,7 @@ fn parse_apt_packages(stdout: &str) -> Vec<PackageUpdate> {
 #[cfg(target_os = "linux")]
 pub(crate) fn list_security_package_names() -> Result<Vec<String>> {
     let output = Command::new("apt-get")
-        .args(&["-s", "dist-upgrade"])
+        .args(["-s", "dist-upgrade"])
         .env("LANG", "C")
         .output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -365,7 +365,7 @@ pub(crate) fn list_security_package_names() -> Result<Vec<String>> {
 #[cfg(target_os = "linux")]
 fn check_dnf_updates() -> Result<(usize, usize, String)> {
     // Get all updates
-    let output = Command::new("dnf").args(&["check-update", "-q"]).output()?;
+    let output = Command::new("dnf").args(["check-update", "-q"]).output()?;
 
     // dnf check-update returns 100 if updates are available, 0 if none, 1 on error
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -380,7 +380,7 @@ fn check_dnf_updates() -> Result<(usize, usize, String)> {
 
     // Check security updates count
     let sec_output = Command::new("dnf")
-        .args(&["check-update", "--security", "-q"])
+        .args(["check-update", "--security", "-q"])
         .output()?;
     let sec_stdout = String::from_utf8_lossy(&sec_output.stdout);
     let mut security = 0;
@@ -396,7 +396,7 @@ fn check_dnf_updates() -> Result<(usize, usize, String)> {
 
 #[cfg(target_os = "linux")]
 fn check_yum_updates() -> Result<(usize, usize, String)> {
-    let output = Command::new("yum").args(&["check-update", "-q"]).output()?;
+    let output = Command::new("yum").args(["check-update", "-q"]).output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -410,7 +410,7 @@ fn check_yum_updates() -> Result<(usize, usize, String)> {
 
     // Yum security updates check
     let sec_output = Command::new("yum")
-        .args(&["check-update", "--security", "-q"])
+        .args(["check-update", "--security", "-q"])
         .output()?;
     let sec_stdout = String::from_utf8_lossy(&sec_output.stdout);
     let mut security = 0;

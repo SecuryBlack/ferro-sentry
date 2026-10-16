@@ -36,11 +36,11 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
 
         let current_len = file.metadata().map(|m| m.len()).unwrap_or(0);
 
-        let mut offset_lock = AUTH_LOG_OFFSET.lock().unwrap();
-        let start_offset = match *offset_lock {
+        // Lock breve: nunca debe llegar a los .await de más abajo.
+        let previous = AUTH_LOG_OFFSET.lock().unwrap().replace(current_len);
+        let start_offset = match previous {
             None => {
                 // Primer escaneo: establecer baseline sin contar histórico.
-                *offset_lock = Some(current_len);
                 tracing::info!(offset = current_len, "auth_monitor baseline establecido");
                 return Ok(findings);
             }
@@ -53,8 +53,6 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
         if file.seek(SeekFrom::Start(start_offset)).is_ok() {
             let _ = file.read_to_string(&mut content);
         }
-        *offset_lock = Some(current_len);
-        drop(offset_lock);
 
         let mut failed_password = 0u32;
         let mut invalid_user = 0u32;

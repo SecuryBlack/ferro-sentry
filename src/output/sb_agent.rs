@@ -6,7 +6,7 @@ use proto::security_service_client::SecurityServiceClient;
 use proto::SecurityEventRequest;
 
 pub mod proto {
-    #![allow(clippy::enum_variant_names)]
+    #![allow(clippy::enum_variant_names, clippy::double_must_use)]
     tonic::include_proto!("securyblack.tunnel.v1");
 }
 

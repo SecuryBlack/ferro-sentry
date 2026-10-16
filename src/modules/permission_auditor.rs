@@ -153,7 +153,8 @@ fn sudo_logging_configured() -> bool {
         }
     }
 
-    for path in ["/etc/sudoers"] {
+    {
+        let path = "/etc/sudoers";
         if let Ok(content) = fs::read_to_string(path) {
             if content.lines().any(|l| {
                 let t = l.trim();
@@ -183,7 +184,7 @@ fn sudo_logging_configured() -> bool {
 #[cfg(target_os = "linux")]
 fn is_active(service: &str) -> bool {
     std::process::Command::new("systemctl")
-        .args(&["is-active", service])
+        .args(["is-active", service])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
         .unwrap_or(false)

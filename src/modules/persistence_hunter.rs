@@ -24,38 +24,38 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                 if let Ok(content) = fs::read_to_string(path) {
                     for line in content.lines() {
                         let trimmed = line.trim();
-                        if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                            if trimmed.contains("/tmp")
+                        if !trimmed.is_empty()
+                            && !trimmed.starts_with('#')
+                            && (trimmed.contains("/tmp")
                                 || trimmed.contains("/var/tmp")
                                 || trimmed.contains("curl ")
                                 || trimmed.contains("wget ")
-                                || trimmed.contains("python -c")
-                            {
-                                let details = json!({
-                                    "rule_id": "PERSIST-001",
-                                    "title": "Suspicious Cron Persistence Detected",
-                                    "cron_file": cron_path,
-                                    "cron_entry": trimmed,
-                                    "summary": format!("Cron entry in '{}' executes commands from temporary directories or downloads external payloads.", cron_path),
-                                    "remediation": format!("Inspect and remove unauthorized cron entry in '{}'.", cron_path)
-                                });
+                                || trimmed.contains("python -c"))
+                        {
+                            let details = json!({
+                                "rule_id": "PERSIST-001",
+                                "title": "Suspicious Cron Persistence Detected",
+                                "cron_file": cron_path,
+                                "cron_entry": trimmed,
+                                "summary": format!("Cron entry in '{}' executes commands from temporary directories or downloads external payloads.", cron_path),
+                                "remediation": format!("Inspect and remove unauthorized cron entry in '{}'.", cron_path)
+                            });
 
-                                findings.push(
-                                    engine
-                                        .build_event(
-                                            "finding",
-                                            "persistence",
-                                            Severity::High,
-                                            "persistence_hunter",
-                                            details,
-                                            Some(&format!(
-                                                "cron_suspicious_{}",
-                                                trimmed.replace(['/', '\\', ' ', ':'], "_")
-                                            )),
-                                        )
-                                        .await,
-                                );
-                            }
+                            findings.push(
+                                engine
+                                    .build_event(
+                                        "finding",
+                                        "persistence",
+                                        Severity::High,
+                                        "persistence_hunter",
+                                        details,
+                                        Some(&format!(
+                                            "cron_suspicious_{}",
+                                            trimmed.replace(['/', '\\', ' ', ':'], "_")
+                                        )),
+                                    )
+                                    .await,
+                            );
                         }
                     }
                 }
@@ -67,41 +67,38 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                             if let Ok(content) = fs::read_to_string(&fpath) {
                                 for line in content.lines() {
                                     let trimmed = line.trim();
-                                    if !trimmed.is_empty() && !trimmed.starts_with('#') {
-                                        if trimmed.contains("/tmp")
+                                    if !trimmed.is_empty()
+                                        && !trimmed.starts_with('#')
+                                        && (trimmed.contains("/tmp")
                                             || trimmed.contains("/var/tmp")
                                             || trimmed.contains("curl ")
-                                            || trimmed.contains("wget ")
-                                        {
-                                            let fpath_str = fpath.to_string_lossy().to_string();
-                                            let details = json!({
-                                                "rule_id": "PERSIST-001",
-                                                "title": "Suspicious Cron Persistence Detected",
-                                                "cron_file": fpath_str,
-                                                "cron_entry": trimmed,
-                                                "summary": format!("Cron entry in '{}' executes suspicious commands.", fpath_str),
-                                                "remediation": format!("Inspect and remove unauthorized cron entry in '{}'.", fpath_str)
-                                            });
+                                            || trimmed.contains("wget "))
+                                    {
+                                        let fpath_str = fpath.to_string_lossy().to_string();
+                                        let details = json!({
+                                            "rule_id": "PERSIST-001",
+                                            "title": "Suspicious Cron Persistence Detected",
+                                            "cron_file": fpath_str,
+                                            "cron_entry": trimmed,
+                                            "summary": format!("Cron entry in '{}' executes suspicious commands.", fpath_str),
+                                            "remediation": format!("Inspect and remove unauthorized cron entry in '{}'.", fpath_str)
+                                        });
 
-                                            findings.push(
-                                                engine
-                                                    .build_event(
-                                                        "finding",
-                                                        "persistence",
-                                                        Severity::High,
-                                                        "persistence_hunter",
-                                                        details,
-                                                        Some(&format!(
-                                                            "cron_dir_suspicious_{}",
-                                                            trimmed.replace(
-                                                                ['/', '\\', ' ', ':'],
-                                                                "_"
-                                                            )
-                                                        )),
-                                                    )
-                                                    .await,
-                                            );
-                                        }
+                                        findings.push(
+                                            engine
+                                                .build_event(
+                                                    "finding",
+                                                    "persistence",
+                                                    Severity::High,
+                                                    "persistence_hunter",
+                                                    details,
+                                                    Some(&format!(
+                                                        "cron_dir_suspicious_{}",
+                                                        trimmed.replace(['/', '\\', ' ', ':'], "_")
+                                                    )),
+                                                )
+                                                .await,
+                                        );
                                     }
                                 }
                             }

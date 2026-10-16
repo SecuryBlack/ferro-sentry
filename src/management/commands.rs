@@ -2414,7 +2414,7 @@ mod fail2ban {
             })
             .collect();
 
-        top_attackers.sort_by(|a, b| b.count.cmp(&a.count));
+        top_attackers.sort_by_key(|a| std::cmp::Reverse(a.count));
         top_attackers.truncate(20);
 
         // Reverse events so the newest ones are first

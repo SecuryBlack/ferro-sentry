@@ -92,48 +92,46 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
         }
 
         // Rule 3: CrowdSec activo pero sin bouncers registrados (detecta pero no bloquea)
-        if crowdsec_active {
-            if has_command("cscli") {
-                if let Ok(output) = Command::new("cscli")
-                    .args(&["bouncers", "list", "-o", "json"])
-                    .output()
-                {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let bouncer_count = serde_json::from_str::<serde_json::Value>(&stdout)
-                        .ok()
-                        .and_then(|v| v.as_array().map(|a| a.len()))
-                        .unwrap_or(0);
+        if crowdsec_active && has_command("cscli") {
+            if let Ok(output) = Command::new("cscli")
+                .args(["bouncers", "list", "-o", "json"])
+                .output()
+            {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let bouncer_count = serde_json::from_str::<serde_json::Value>(&stdout)
+                    .ok()
+                    .and_then(|v| v.as_array().map(|a| a.len()))
+                    .unwrap_or(0);
 
-                    if bouncer_count == 0 {
-                        let details = json!({
-                            "rule_id": "IPS-003",
-                            "title": "CrowdSec Running Without Any Bouncer",
-                            "bouncer_count": 0,
-                            "summary": "CrowdSec is detecting threats but has no registered bouncer, so decisions are never enforced (no traffic is actually blocked).",
-                            "remediation": "Install a bouncer, e.g. 'apt install crowdsec-firewall-bouncer-iptables' and verify with 'cscli bouncers list'."
-                        });
-                        findings.push(
-                            engine
-                                .build_event(
-                                    "finding",
-                                    "posture",
-                                    Severity::Medium,
-                                    "intrusion_prevention_auditor",
-                                    details,
-                                    Some("crowdsec_no_bouncer"),
-                                )
-                                .await,
-                        );
-                    } else {
-                        findings.push(
-                            engine
-                                .build_resolved_event(
-                                    "intrusion_prevention_auditor",
-                                    "crowdsec_no_bouncer",
-                                )
-                                .await,
-                        );
-                    }
+                if bouncer_count == 0 {
+                    let details = json!({
+                        "rule_id": "IPS-003",
+                        "title": "CrowdSec Running Without Any Bouncer",
+                        "bouncer_count": 0,
+                        "summary": "CrowdSec is detecting threats but has no registered bouncer, so decisions are never enforced (no traffic is actually blocked).",
+                        "remediation": "Install a bouncer, e.g. 'apt install crowdsec-firewall-bouncer-iptables' and verify with 'cscli bouncers list'."
+                    });
+                    findings.push(
+                        engine
+                            .build_event(
+                                "finding",
+                                "posture",
+                                Severity::Medium,
+                                "intrusion_prevention_auditor",
+                                details,
+                                Some("crowdsec_no_bouncer"),
+                            )
+                            .await,
+                    );
+                } else {
+                    findings.push(
+                        engine
+                            .build_resolved_event(
+                                "intrusion_prevention_auditor",
+                                "crowdsec_no_bouncer",
+                            )
+                            .await,
+                    );
                 }
             }
         }
@@ -156,7 +154,7 @@ fn has_command(cmd: &str) -> bool {
 #[cfg(target_os = "linux")]
 fn is_active(service: &str) -> bool {
     Command::new("systemctl")
-        .args(&["is-active", service])
+        .args(["is-active", service])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
         .unwrap_or(false)
@@ -172,7 +170,7 @@ fn fail2ban_sshd_port_mismatch() -> Option<(String, String)> {
     let configured_port = configured_ssh_port();
 
     let output = Command::new("fail2ban-client")
-        .args(&["get", "sshd", "port"])
+        .args(["get", "sshd", "port"])
         .output()
         .ok()?;
     if !output.status.success() {
