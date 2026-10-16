@@ -48,10 +48,8 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
 
                             // 2. Dangling binary handle (deleted binary running)
                             if path_str.contains("(deleted)") {
-                                let clean_path = path_str
-                                    .replace("(deleted)", "")
-                                    .trim()
-                                    .to_string();
+                                let clean_path =
+                                    path_str.replace("(deleted)", "").trim().to_string();
                                 deleted_bin_map
                                     .entry(clean_path)
                                     .or_default()

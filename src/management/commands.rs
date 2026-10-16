@@ -74,9 +74,10 @@ pub fn register(
         update_now::handle().await
     });
 
-    registry.register("firewall_get_status", move |_payload, _progress| async move {
-        firewall::handle_get_status().await
-    });
+    registry.register(
+        "firewall_get_status",
+        move |_payload, _progress| async move { firewall::handle_get_status().await },
+    );
 
     registry.register("firewall_toggle", move |payload, _progress| async move {
         firewall::handle_toggle(payload).await
@@ -86,29 +87,33 @@ pub fn register(
         firewall::handle_add_rule(payload).await
     });
 
-    registry.register("firewall_delete_rule", move |payload, _progress| async move {
-        firewall::handle_delete_rule(payload).await
-    });
+    registry.register(
+        "firewall_delete_rule",
+        move |payload, _progress| async move { firewall::handle_delete_rule(payload).await },
+    );
 
-    registry.register("firewall_install_ufw", move |_payload, _progress| async move {
-        firewall::handle_install_ufw().await
-    });
+    registry.register(
+        "firewall_install_ufw",
+        move |_payload, _progress| async move { firewall::handle_install_ufw().await },
+    );
 
     registry.register("ssh_hardening", move |payload, _progress| async move {
         ssh_hardening::handle(payload).await
     });
 
-    registry.register("configure_unattended_upgrades", move |_payload, _progress| async move {
-        auto_upgrades::handle().await
-    });
+    registry.register(
+        "configure_unattended_upgrades",
+        move |_payload, _progress| async move { auto_upgrades::handle().await },
+    );
 
     registry.register("install_fail2ban", move |_payload, _progress| async move {
         intrusion_prevention::handle().await
     });
 
-    registry.register("fail2ban_get_status", move |_payload, _progress| async move {
-        fail2ban::handle_get_status().await
-    });
+    registry.register(
+        "fail2ban_get_status",
+        move |_payload, _progress| async move { fail2ban::handle_get_status().await },
+    );
 
     registry.register("fail2ban_toggle", move |payload, _progress| async move {
         fail2ban::handle_toggle(payload).await
@@ -122,29 +127,33 @@ pub fn register(
         fail2ban::handle_ban_ip(payload).await
     });
 
-    registry.register("fail2ban_set_whitelist", move |payload, _progress| async move {
-        fail2ban::handle_set_whitelist(payload).await
-    });
+    registry.register(
+        "fail2ban_set_whitelist",
+        move |payload, _progress| async move { fail2ban::handle_set_whitelist(payload).await },
+    );
 
     registry.register("fail2ban_get_logs", move |payload, _progress| async move {
         fail2ban::handle_get_logs(payload).await
     });
 
-    registry.register("fail2ban_get_config", move |_payload, _progress| async move {
-        fail2ban::handle_get_config().await
-    });
+    registry.register(
+        "fail2ban_get_config",
+        move |_payload, _progress| async move { fail2ban::handle_get_config().await },
+    );
 
-    registry.register("fail2ban_set_config", move |payload, _progress| async move {
-        fail2ban::handle_set_config(payload).await
-    });
+    registry.register(
+        "fail2ban_set_config",
+        move |payload, _progress| async move { fail2ban::handle_set_config(payload).await },
+    );
 
     registry.register("install_crowdsec", move |_payload, _progress| async move {
         crowdsec::handle_install().await
     });
 
-    registry.register("crowdsec_get_status", move |_payload, _progress| async move {
-        crowdsec::handle_get_status().await
-    });
+    registry.register(
+        "crowdsec_get_status",
+        move |_payload, _progress| async move { crowdsec::handle_get_status().await },
+    );
 
     registry.register("crowdsec_toggle", move |payload, _progress| async move {
         crowdsec::handle_toggle(payload).await
@@ -158,13 +167,15 @@ pub fn register(
         crowdsec::handle_unban_ip(payload).await
     });
 
-    registry.register("crowdsec_get_alerts", move |payload, _progress| async move {
-        crowdsec::handle_get_alerts(payload).await
-    });
+    registry.register(
+        "crowdsec_get_alerts",
+        move |payload, _progress| async move { crowdsec::handle_get_alerts(payload).await },
+    );
 
-    registry.register("crowdsec_install_collection", move |payload, _progress| async move {
-        crowdsec::handle_install_collection(payload).await
-    });
+    registry.register(
+        "crowdsec_install_collection",
+        move |payload, _progress| async move { crowdsec::handle_install_collection(payload).await },
+    );
 }
 
 mod update_now {
@@ -647,9 +658,7 @@ mod firewall {
 
     #[cfg(not(target_os = "linux"))]
     pub async fn handle_install_ufw() -> CommandOutcome {
-        CommandOutcome::failed(
-            "UFW installation is only supported on Linux".to_string(),
-        )
+        CommandOutcome::failed("UFW installation is only supported on Linux".to_string())
     }
 
     #[cfg(target_os = "linux")]
@@ -833,20 +842,26 @@ mod firewall {
             let mut ssh_rule_added = false;
             if !ssh_allowed {
                 let _ = Command::new("ufw")
-                    .args(["allow", &format!("{ssh_port}/tcp"), "comment", "SecuryBlack Anti-Lockout"])
+                    .args([
+                        "allow",
+                        &format!("{ssh_port}/tcp"),
+                        "comment",
+                        "SecuryBlack Anti-Lockout",
+                    ])
                     .output();
                 ssh_rule_added = true;
             }
 
             let enable_res = Command::new("ufw").args(["--force", "enable"]).output();
             match enable_res {
-                Ok(o) if o.status.success() => {
-                    CommandOutcome::ok(serde_json::json!({
+                Ok(o) if o.status.success() => CommandOutcome::ok(
+                    serde_json::json!({
                         "active": true,
                         "ssh_rule_added": ssh_rule_added,
                         "ssh_port": ssh_port
-                    }).to_string())
-                }
+                    })
+                    .to_string(),
+                ),
                 Ok(o) => {
                     let stderr = String::from_utf8_lossy(&o.stderr);
                     CommandOutcome::failed(format!("ufw enable failed: {stderr}"))
@@ -877,7 +892,11 @@ mod firewall {
         };
 
         let port = req.port.trim();
-        if port.is_empty() || !port.chars().all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '-') {
+        if port.is_empty()
+            || !port
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '-')
+        {
             return CommandOutcome::failed("invalid port specification".to_string());
         }
 
@@ -886,7 +905,11 @@ mod firewall {
             "deny" => "deny",
             "reject" => "reject",
             "limit" => "limit",
-            _ => return CommandOutcome::failed("invalid action, must be allow, deny, reject, or limit".to_string()),
+            _ => {
+                return CommandOutcome::failed(
+                    "invalid action, must be allow, deny, reject, or limit".to_string(),
+                )
+            }
         };
 
         let proto = req.proto.as_deref().map(|p| p.to_lowercase());
@@ -898,8 +921,16 @@ mod firewall {
 
         let mut args = vec![action.to_string()];
 
-        if let Some(from) = req.from.as_deref().map(|f| f.trim()).filter(|f| !f.is_empty() && *f != "any" && *f != "Anywhere") {
-            if !from.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == ':' || c == '/') {
+        if let Some(from) = req
+            .from
+            .as_deref()
+            .map(|f| f.trim())
+            .filter(|f| !f.is_empty() && *f != "any" && *f != "Anywhere")
+        {
+            if !from
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == ':' || c == '/')
+            {
                 return CommandOutcome::failed("invalid from address".to_string());
             }
             args.push("from".to_string());
@@ -921,8 +952,19 @@ mod firewall {
             args.push(port_spec);
         }
 
-        if let Some(comment) = req.comment.as_deref().map(|c| c.trim()).filter(|c| !c.is_empty()) {
-            let clean_comment: String = comment.chars().filter(|c| c.is_ascii_alphanumeric() || c.is_whitespace() || *c == '-' || *c == '_').take(60).collect();
+        if let Some(comment) = req
+            .comment
+            .as_deref()
+            .map(|c| c.trim())
+            .filter(|c| !c.is_empty())
+        {
+            let clean_comment: String = comment
+                .chars()
+                .filter(|c| {
+                    c.is_ascii_alphanumeric() || c.is_whitespace() || *c == '-' || *c == '_'
+                })
+                .take(60)
+                .collect();
             if !clean_comment.is_empty() {
                 args.push("comment".to_string());
                 args.push(clean_comment);
@@ -960,9 +1002,9 @@ mod firewall {
             .output();
 
         match res {
-            Ok(o) if o.status.success() => {
-                CommandOutcome::ok(serde_json::json!({ "success": true, "deleted_rule": req.rule_number }).to_string())
-            }
+            Ok(o) if o.status.success() => CommandOutcome::ok(
+                serde_json::json!({ "success": true, "deleted_rule": req.rule_number }).to_string(),
+            ),
             Ok(o) => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
                 let stdout = String::from_utf8_lossy(&o.stdout);
@@ -986,7 +1028,8 @@ mod firewall {
 
         if check_cmd("ufw") {
             return CommandOutcome::ok(
-                serde_json::json!({ "success": true, "message": "UFW is already installed" }).to_string(),
+                serde_json::json!({ "success": true, "message": "UFW is already installed" })
+                    .to_string(),
             );
         }
 
@@ -1001,9 +1044,13 @@ mod firewall {
         } else if check_cmd("yum") {
             Command::new("yum").args(["install", "-y", "ufw"]).output()
         } else if check_cmd("pacman") {
-            Command::new("pacman").args(["-Sy", "--noconfirm", "ufw"]).output()
+            Command::new("pacman")
+                .args(["-Sy", "--noconfirm", "ufw"])
+                .output()
         } else if check_cmd("zypper") {
-            Command::new("zypper").args(["--non-interactive", "install", "ufw"]).output()
+            Command::new("zypper")
+                .args(["--non-interactive", "install", "ufw"])
+                .output()
         } else if check_cmd("apk") {
             Command::new("apk").args(["add", "ufw"]).output()
         } else {
@@ -1024,7 +1071,8 @@ mod firewall {
                     )
                 } else {
                     CommandOutcome::failed(
-                        "Installation command succeeded but 'ufw' binary was not found in PATH".to_string(),
+                        "Installation command succeeded but 'ufw' binary was not found in PATH"
+                            .to_string(),
                     )
                 }
             }
@@ -1087,7 +1135,11 @@ mod ssh_hardening {
         // Locate sshd binary to test syntax
         let sshd_bin = match find_sshd_binary() {
             Some(bin) => bin,
-            None => return CommandOutcome::failed("sshd binary not found to validate configuration".to_string()),
+            None => {
+                return CommandOutcome::failed(
+                    "sshd binary not found to validate configuration".to_string(),
+                )
+            }
         };
 
         let mut directives = Vec::new();
@@ -1118,7 +1170,9 @@ mod ssh_hardening {
         // Backup main config if it exists
         if main_config.exists() {
             if let Err(e) = fs::copy(main_config, main_backup) {
-                return CommandOutcome::failed(format!("Failed to backup /etc/ssh/sshd_config: {e}"));
+                return CommandOutcome::failed(format!(
+                    "Failed to backup /etc/ssh/sshd_config: {e}"
+                ));
             }
         }
 
@@ -1145,7 +1199,9 @@ mod ssh_hardening {
                     }
                     if !trimmed.is_empty() && !trimmed.starts_with('#') {
                         let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                        if !parts.is_empty() && keys_to_override.contains(&parts[0].to_lowercase().as_str()) {
+                        if !parts.is_empty()
+                            && keys_to_override.contains(&parts[0].to_lowercase().as_str())
+                        {
                             modified_lines.push(format!("# [SecuryBlack hardened] {line}"));
                             continue;
                         }
@@ -1165,7 +1221,9 @@ mod ssh_hardening {
                     if main_backup.exists() {
                         let _ = fs::copy(main_backup, main_config);
                     }
-                    return CommandOutcome::failed(format!("Failed to write /etc/ssh/sshd_config: {e}"));
+                    return CommandOutcome::failed(format!(
+                        "Failed to write /etc/ssh/sshd_config: {e}"
+                    ));
                 }
             }
         }
@@ -1175,7 +1233,9 @@ mod ssh_hardening {
                 if main_backup.exists() {
                     let _ = fs::copy(main_backup, main_config);
                 }
-                return CommandOutcome::failed(format!("Failed to write drop-in configuration: {e}"));
+                return CommandOutcome::failed(format!(
+                    "Failed to write drop-in configuration: {e}"
+                ));
             }
         }
 
@@ -1233,7 +1293,9 @@ mod ssh_hardening {
             Ok(o) => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
                 let stdout = String::from_utf8_lossy(&o.stdout);
-                CommandOutcome::failed(format!("SSH config validated but service reload failed: {stderr} {stdout}"))
+                CommandOutcome::failed(format!(
+                    "SSH config validated but service reload failed: {stderr} {stdout}"
+                ))
             }
             Err(e) => CommandOutcome::failed(format!("Failed to reload SSH service: {e}")),
         }
@@ -1301,7 +1363,9 @@ mod ssh_hardening {
 
     #[cfg(not(target_os = "linux"))]
     fn apply_ssh_hardening(_opts: SshHardeningPayload) -> CommandOutcome {
-        CommandOutcome::failed("SSH hardening remediation is only supported on Linux hosts".to_string())
+        CommandOutcome::failed(
+            "SSH hardening remediation is only supported on Linux hosts".to_string(),
+        )
     }
 }
 
@@ -1340,9 +1404,15 @@ mod auto_upgrades {
                     Ok(o) if o.status.success() => {}
                     Ok(o) => {
                         let stderr = String::from_utf8_lossy(&o.stderr);
-                        return CommandOutcome::failed(format!("Failed to install unattended-upgrades: {stderr}"));
+                        return CommandOutcome::failed(format!(
+                            "Failed to install unattended-upgrades: {stderr}"
+                        ));
                     }
-                    Err(e) => return CommandOutcome::failed(format!("Failed to run apt-get install: {e}")),
+                    Err(e) => {
+                        return CommandOutcome::failed(format!(
+                            "Failed to run apt-get install: {e}"
+                        ))
+                    }
                 }
             }
 
@@ -1353,7 +1423,9 @@ mod auto_upgrades {
             }
             let auto_conf = "APT::Periodic::Update-Package-Lists \"1\";\nAPT::Periodic::Unattended-Upgrade \"1\";\n";
             if let Err(e) = fs::write("/etc/apt/apt.conf.d/20auto-upgrades", auto_conf) {
-                return CommandOutcome::failed(format!("Failed to write /etc/apt/apt.conf.d/20auto-upgrades: {e}"));
+                return CommandOutcome::failed(format!(
+                    "Failed to write /etc/apt/apt.conf.d/20auto-upgrades: {e}"
+                ));
             }
 
             // 3. Enable and start systemd service/timers
@@ -1361,7 +1433,12 @@ mod auto_upgrades {
                 .args(["enable", "--now", "unattended-upgrades"])
                 .output();
             let _ = Command::new("systemctl")
-                .args(["enable", "--now", "apt-daily.timer", "apt-daily-upgrade.timer"])
+                .args([
+                    "enable",
+                    "--now",
+                    "apt-daily.timer",
+                    "apt-daily-upgrade.timer",
+                ])
                 .output();
 
             CommandOutcome::ok(
@@ -1411,14 +1488,17 @@ mod auto_upgrades {
             CommandOutcome::failed("Failed to configure automatic updates via yum".to_string())
         } else {
             CommandOutcome::failed(
-                "No supported package manager found for unattended upgrades (apt-get, dnf, yum)".to_string(),
+                "No supported package manager found for unattended upgrades (apt-get, dnf, yum)"
+                    .to_string(),
             )
         }
     }
 
     #[cfg(not(target_os = "linux"))]
     fn configure_auto_upgrades() -> CommandOutcome {
-        CommandOutcome::failed("Unattended upgrades remediation is only supported on Linux hosts".to_string())
+        CommandOutcome::failed(
+            "Unattended upgrades remediation is only supported on Linux hosts".to_string(),
+        )
     }
 }
 
@@ -1454,13 +1534,21 @@ mod intrusion_prevention {
                     .args(["install", "-y", "fail2ban"])
                     .output()
             } else if check_cmd("dnf") {
-                Command::new("dnf").args(["install", "-y", "fail2ban"]).output()
+                Command::new("dnf")
+                    .args(["install", "-y", "fail2ban"])
+                    .output()
             } else if check_cmd("yum") {
-                Command::new("yum").args(["install", "-y", "epel-release", "fail2ban"]).output()
+                Command::new("yum")
+                    .args(["install", "-y", "epel-release", "fail2ban"])
+                    .output()
             } else if check_cmd("pacman") {
-                Command::new("pacman").args(["-Sy", "--noconfirm", "fail2ban"]).output()
+                Command::new("pacman")
+                    .args(["-Sy", "--noconfirm", "fail2ban"])
+                    .output()
             } else if check_cmd("zypper") {
-                Command::new("zypper").args(["--non-interactive", "install", "fail2ban"]).output()
+                Command::new("zypper")
+                    .args(["--non-interactive", "install", "fail2ban"])
+                    .output()
             } else if check_cmd("apk") {
                 Command::new("apk").args(["add", "fail2ban"]).output()
             } else {
@@ -1474,9 +1562,15 @@ mod intrusion_prevention {
                 Ok(o) => {
                     let stderr = String::from_utf8_lossy(&o.stderr);
                     let stdout = String::from_utf8_lossy(&o.stdout);
-                    return CommandOutcome::failed(format!("Failed to install fail2ban: {stderr} {stdout}"));
+                    return CommandOutcome::failed(format!(
+                        "Failed to install fail2ban: {stderr} {stdout}"
+                    ));
                 }
-                Err(e) => return CommandOutcome::failed(format!("Failed to execute installer for fail2ban: {e}")),
+                Err(e) => {
+                    return CommandOutcome::failed(format!(
+                        "Failed to execute installer for fail2ban: {e}"
+                    ))
+                }
             }
         }
 
@@ -1506,7 +1600,11 @@ mod intrusion_prevention {
         let enable_res = Command::new("systemctl")
             .args(["enable", "--now", "fail2ban"])
             .output()
-            .or_else(|_| Command::new("service").args(["fail2ban", "restart"]).output());
+            .or_else(|_| {
+                Command::new("service")
+                    .args(["fail2ban", "restart"])
+                    .output()
+            });
 
         match enable_res {
             Ok(o) if o.status.success() => {
@@ -1530,7 +1628,9 @@ mod intrusion_prevention {
 
     #[cfg(not(target_os = "linux"))]
     fn install_and_configure_fail2ban() -> CommandOutcome {
-        CommandOutcome::failed("Intrusion prevention remediation is only supported on Linux hosts".to_string())
+        CommandOutcome::failed(
+            "Intrusion prevention remediation is only supported on Linux hosts".to_string(),
+        )
     }
 }
 
@@ -1787,7 +1887,9 @@ mod fail2ban {
             );
         }
 
-        let is_active_cmd = Command::new("systemctl").args(["is-active", "fail2ban"]).output();
+        let is_active_cmd = Command::new("systemctl")
+            .args(["is-active", "fail2ban"])
+            .output();
         let active = is_active_cmd
             .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
             .unwrap_or(false);
@@ -1795,7 +1897,9 @@ mod fail2ban {
         if !active {
             // Also check via fail2ban-client ping in case it's managed without systemd
             let ping = Command::new("fail2ban-client").arg("ping").output();
-            let is_ping_ok = ping.map(|o| String::from_utf8_lossy(&o.stdout).contains("Server replied: pong")).unwrap_or(false);
+            let is_ping_ok = ping
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("Server replied: pong"))
+                .unwrap_or(false);
 
             if !is_ping_ok {
                 return CommandOutcome::ok(
@@ -1820,7 +1924,9 @@ mod fail2ban {
 
         // Query active jails
         let status_out = Command::new("fail2ban-client").arg("status").output();
-        let status_str = status_out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+        let status_str = status_out
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
         let jail_names = parse_jail_list(&status_str);
 
         let mut jails = Vec::new();
@@ -1829,7 +1935,10 @@ mod fail2ban {
         let mut total_failed = 0;
 
         for jail_name in &jail_names {
-            if let Ok(j_out) = Command::new("fail2ban-client").args(["status", jail_name]).output() {
+            if let Ok(j_out) = Command::new("fail2ban-client")
+                .args(["status", jail_name])
+                .output()
+            {
                 let j_str = String::from_utf8_lossy(&j_out.stdout);
                 let jail_info = parse_jail_status(jail_name, &j_str);
                 total_banned += jail_info.currently_banned;
@@ -1865,7 +1974,10 @@ mod fail2ban {
     #[cfg(target_os = "linux")]
     fn get_version() -> Option<String> {
         use std::process::Command;
-        let out = Command::new("fail2ban-client").arg("version").output().ok()?;
+        let out = Command::new("fail2ban-client")
+            .arg("version")
+            .output()
+            .ok()?;
         if out.status.success() {
             let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !v.is_empty() {
@@ -1946,18 +2058,23 @@ mod fail2ban {
 
     #[cfg(target_os = "linux")]
     fn get_ignore_ips(jail_names: &[String]) -> Vec<String> {
-        use std::process::Command;
         use std::fs;
         use std::path::Path;
+        use std::process::Command;
 
         // Try getting from first active jail via client
         if let Some(first_jail) = jail_names.first() {
-            if let Ok(out) = Command::new("fail2ban-client").args(["get", first_jail, "ignoreip"]).output() {
+            if let Ok(out) = Command::new("fail2ban-client")
+                .args(["get", first_jail, "ignoreip"])
+                .output()
+            {
                 if out.status.success() {
                     let raw = String::from_utf8_lossy(&out.stdout);
                     let mut ips = Vec::new();
                     for line in raw.lines() {
-                        let trimmed = line.trim().trim_start_matches(|c| c == '|' || c == '-' || c == '`' || c == ' ' || c == '\t');
+                        let trimmed = line.trim().trim_start_matches(|c| {
+                            c == '|' || c == '-' || c == '`' || c == ' ' || c == '\t'
+                        });
                         if !trimmed.is_empty() && !trimmed.to_lowercase().contains("ignored") {
                             for part in trimmed.split_whitespace() {
                                 let clean = part.trim_matches(',');
@@ -2065,7 +2182,11 @@ mod fail2ban {
                     success = true;
                 }
                 Ok(o) => {
-                    last_err = format!("{} {}", String::from_utf8_lossy(&o.stderr), String::from_utf8_lossy(&o.stdout));
+                    last_err = format!(
+                        "{} {}",
+                        String::from_utf8_lossy(&o.stderr),
+                        String::from_utf8_lossy(&o.stdout)
+                    );
                     // Try generic unban
                     if let Ok(o2) = Command::new("fail2ban-client").args(["unban", ip]).output() {
                         if o2.status.success() {
@@ -2088,7 +2209,9 @@ mod fail2ban {
                         let st_str = String::from_utf8_lossy(&st.stdout);
                         let jails = parse_jail_list(&st_str);
                         for j in jails {
-                            let _ = Command::new("fail2ban-client").args(["set", &j, "unbanip", ip]).output();
+                            let _ = Command::new("fail2ban-client")
+                                .args(["set", &j, "unbanip", ip])
+                                .output();
                         }
                         success = true;
                     }
@@ -2124,15 +2247,19 @@ mod fail2ban {
             .output();
 
         match res {
-            Ok(o) if o.status.success() => {
-                CommandOutcome::ok(serde_json::json!({ "banned": ip, "jail": target_jail }).to_string())
-            }
+            Ok(o) if o.status.success() => CommandOutcome::ok(
+                serde_json::json!({ "banned": ip, "jail": target_jail }).to_string(),
+            ),
             Ok(o) => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
                 let stdout = String::from_utf8_lossy(&o.stdout);
-                CommandOutcome::failed(format!("Failed to ban IP {ip} in jail {target_jail}: {stderr} {stdout}"))
+                CommandOutcome::failed(format!(
+                    "Failed to ban IP {ip} in jail {target_jail}: {stderr} {stdout}"
+                ))
             }
-            Err(e) => CommandOutcome::failed(format!("Failed to execute fail2ban-client banip: {e}")),
+            Err(e) => {
+                CommandOutcome::failed(format!("Failed to execute fail2ban-client banip: {e}"))
+            }
         }
     }
 
@@ -2183,7 +2310,10 @@ mod fail2ban {
 
             if !found_ignoreip {
                 // Prepend or append to [DEFAULT]
-                if let Some(pos) = lines.iter().position(|l| l.trim().eq_ignore_ascii_case("[default]")) {
+                if let Some(pos) = lines
+                    .iter()
+                    .position(|l| l.trim().eq_ignore_ascii_case("[default]"))
+                {
                     lines.insert(pos + 1, ignoreip_line.clone());
                 } else {
                     lines.insert(0, format!("[DEFAULT]\n{ignoreip_line}\n"));
@@ -2196,41 +2326,58 @@ mod fail2ban {
         };
 
         if let Err(e) = fs::write(jail_local, new_content) {
-            return CommandOutcome::failed(format!("Failed to write /etc/fail2ban/jail.local: {e}"));
+            return CommandOutcome::failed(format!(
+                "Failed to write /etc/fail2ban/jail.local: {e}"
+            ));
         }
 
         // Reload fail2ban
         let reload_res = Command::new("fail2ban-client").arg("reload").output();
         match reload_res {
-            Ok(o) if o.status.success() => {
-                CommandOutcome::ok(serde_json::json!({ "success": true, "ignore_ips": cleaned_ips }).to_string())
-            }
+            Ok(o) if o.status.success() => CommandOutcome::ok(
+                serde_json::json!({ "success": true, "ignore_ips": cleaned_ips }).to_string(),
+            ),
             Ok(o) => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
                 CommandOutcome::failed(format!("Failed to reload fail2ban configuration: {stderr}"))
             }
-            Err(e) => CommandOutcome::failed(format!("Failed to execute fail2ban-client reload: {e}")),
+            Err(e) => {
+                CommandOutcome::failed(format!("Failed to execute fail2ban-client reload: {e}"))
+            }
         }
     }
 
     #[cfg(target_os = "linux")]
     fn get_logs_linux(payload: serde_json::Value) -> CommandOutcome {
-        use std::process::Command;
         use std::fs;
+        use std::process::Command;
 
-        let req: GetLogsPayload = serde_json::from_value(payload).unwrap_or(GetLogsPayload { tail: None });
+        let req: GetLogsPayload =
+            serde_json::from_value(payload).unwrap_or(GetLogsPayload { tail: None });
         let tail_lines = req.tail.unwrap_or(150).clamp(10, 1000);
 
         let raw_content = if let Ok(content) = fs::read_to_string("/var/log/fail2ban.log") {
             let lines: Vec<&str> = content.lines().collect();
-            let start = if lines.len() > tail_lines { lines.len() - tail_lines } else { 0 };
+            let start = if lines.len() > tail_lines {
+                lines.len() - tail_lines
+            } else {
+                0
+            };
             lines[start..].join("\n")
         } else {
             // Fallback to journalctl
             let j_out = Command::new("journalctl")
-                .args(["-u", "fail2ban", "-n", &tail_lines.to_string(), "--no-pager"])
+                .args([
+                    "-u",
+                    "fail2ban",
+                    "-n",
+                    &tail_lines.to_string(),
+                    "--no-pager",
+                ])
                 .output();
-            j_out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+            j_out
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default()
         };
 
         let mut events = Vec::new();
@@ -2244,22 +2391,28 @@ mod fail2ban {
         use std::collections::HashMap;
         let mut map: HashMap<String, (u32, String, String, String)> = HashMap::new(); // ip -> (count, last_action, last_seen, jail)
         for ev in &events {
-            let entry = map.entry(ev.ip.clone()).or_insert((0, ev.action.clone(), ev.timestamp.clone(), ev.jail.clone()));
+            let entry = map.entry(ev.ip.clone()).or_insert((
+                0,
+                ev.action.clone(),
+                ev.timestamp.clone(),
+                ev.jail.clone(),
+            ));
             entry.0 += 1;
             entry.1 = ev.action.clone();
             entry.2 = ev.timestamp.clone();
             entry.3 = ev.jail.clone();
         }
 
-        let mut top_attackers: Vec<TopAttacker> = map.into_iter().map(|(ip, (count, last_action, last_seen, jail))| {
-            TopAttacker {
+        let mut top_attackers: Vec<TopAttacker> = map
+            .into_iter()
+            .map(|(ip, (count, last_action, last_seen, jail))| TopAttacker {
                 ip,
                 count,
                 last_action,
                 last_seen,
                 jail,
-            }
-        }).collect();
+            })
+            .collect();
 
         top_attackers.sort_by(|a, b| b.count.cmp(&a.count));
         top_attackers.truncate(20);
@@ -2287,18 +2440,34 @@ mod fail2ban {
 
         let (action, ip, jail) = if let Some(pos) = trimmed.find("Ban ") {
             let rest = trimmed[pos + 4..].trim();
-            let ip = rest.split_whitespace().next()?.trim_matches(',').to_string();
+            let ip = rest
+                .split_whitespace()
+                .next()?
+                .trim_matches(',')
+                .to_string();
             let jail = extract_jail_from_line(trimmed).unwrap_or_else(|| "sshd".to_string());
-            let action = if trimmed[..pos].trim_end().ends_with("Restore") { "restore" } else { "ban" };
+            let action = if trimmed[..pos].trim_end().ends_with("Restore") {
+                "restore"
+            } else {
+                "ban"
+            };
             (action.to_string(), ip, jail)
         } else if let Some(pos) = trimmed.find("Unban ") {
             let rest = trimmed[pos + 6..].trim();
-            let ip = rest.split_whitespace().next()?.trim_matches(',').to_string();
+            let ip = rest
+                .split_whitespace()
+                .next()?
+                .trim_matches(',')
+                .to_string();
             let jail = extract_jail_from_line(trimmed).unwrap_or_else(|| "sshd".to_string());
             ("unban".to_string(), ip, jail)
         } else if let Some(pos) = trimmed.find("Found ") {
             let rest = trimmed[pos + 6..].trim();
-            let ip = rest.split_whitespace().next()?.trim_matches(',').to_string();
+            let ip = rest
+                .split_whitespace()
+                .next()?
+                .trim_matches(',')
+                .to_string();
             let jail = extract_jail_from_line(trimmed).unwrap_or_else(|| "sshd".to_string());
             ("found".to_string(), ip, jail)
         } else {
@@ -2306,7 +2475,10 @@ mod fail2ban {
         };
 
         // Extract timestamp (either first 19 chars "YYYY-MM-DD HH:MM:SS" or first 15 chars syslog)
-        let timestamp = if trimmed.len() >= 19 && trimmed.chars().nth(4) == Some('-') && trimmed.chars().nth(7) == Some('-') {
+        let timestamp = if trimmed.len() >= 19
+            && trimmed.chars().nth(4) == Some('-')
+            && trimmed.chars().nth(7) == Some('-')
+        {
             trimmed[..19].to_string()
         } else if trimmed.len() >= 15 {
             trimmed[..15].to_string()
@@ -2344,9 +2516,9 @@ mod fail2ban {
 
     #[cfg(target_os = "linux")]
     fn get_config_linux() -> CommandOutcome {
-        use std::process::Command;
         use std::fs;
         use std::path::Path;
+        use std::process::Command;
 
         let mut bantime = "10m".to_string();
         let mut findtime = "10m".to_string();
@@ -2376,7 +2548,8 @@ mod fail2ban {
                                         maxretry = n;
                                     }
                                 } else if key == "bantime.increment" {
-                                    bantime_increment = val.eq_ignore_ascii_case("true") || val == "1";
+                                    bantime_increment =
+                                        val.eq_ignore_ascii_case("true") || val == "1";
                                 }
                             }
                         }
@@ -2388,7 +2561,10 @@ mod fail2ban {
             }
         }
 
-        if let Ok(out) = Command::new("fail2ban-client").args(["get", "sshd", "bantime"]).output() {
+        if let Ok(out) = Command::new("fail2ban-client")
+            .args(["get", "sshd", "bantime"])
+            .output()
+        {
             if out.status.success() {
                 let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !v.is_empty() {
@@ -2396,7 +2572,10 @@ mod fail2ban {
                 }
             }
         }
-        if let Ok(out) = Command::new("fail2ban-client").args(["get", "sshd", "maxretry"]).output() {
+        if let Ok(out) = Command::new("fail2ban-client")
+            .args(["get", "sshd", "maxretry"])
+            .output()
+        {
             if out.status.success() {
                 let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if let Ok(n) = v.parse::<u32>() {
@@ -2404,7 +2583,10 @@ mod fail2ban {
                 }
             }
         }
-        if let Ok(out) = Command::new("fail2ban-client").args(["get", "sshd", "findtime"]).output() {
+        if let Ok(out) = Command::new("fail2ban-client")
+            .args(["get", "sshd", "findtime"])
+            .output()
+        {
             if out.status.success() {
                 let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !v.is_empty() {
@@ -2425,9 +2607,9 @@ mod fail2ban {
 
     #[cfg(target_os = "linux")]
     fn set_config_linux(payload: serde_json::Value) -> CommandOutcome {
-        use std::process::Command;
         use std::fs;
         use std::path::Path;
+        use std::process::Command;
 
         let req: SetConfigPayload = match serde_json::from_value(payload) {
             Ok(p) => p,
@@ -2458,13 +2640,15 @@ mod fail2ban {
         let new_content = update_default_ini_keys(&existing, &updates);
 
         if let Err(e) = fs::write(jail_local, new_content) {
-            return CommandOutcome::failed(format!("Failed to write /etc/fail2ban/jail.local: {e}"));
+            return CommandOutcome::failed(format!(
+                "Failed to write /etc/fail2ban/jail.local: {e}"
+            ));
         }
 
         let reload_res = Command::new("fail2ban-client").arg("reload").output();
         match reload_res {
-            Ok(o) if o.status.success() => {
-                CommandOutcome::ok(serde_json::json!({
+            Ok(o) if o.status.success() => CommandOutcome::ok(
+                serde_json::json!({
                     "success": true,
                     "applied": {
                         "bantime": req.bantime,
@@ -2472,13 +2656,16 @@ mod fail2ban {
                         "maxretry": req.maxretry,
                         "bantime_increment": req.bantime_increment
                     }
-                }).to_string())
-            }
+                })
+                .to_string(),
+            ),
             Ok(o) => {
                 let stderr = String::from_utf8_lossy(&o.stderr);
                 CommandOutcome::failed(format!("Failed to reload fail2ban configuration: {stderr}"))
             }
-            Err(e) => CommandOutcome::failed(format!("Failed to execute fail2ban-client reload: {e}")),
+            Err(e) => {
+                CommandOutcome::failed(format!("Failed to execute fail2ban-client reload: {e}"))
+            }
         }
     }
 
@@ -2522,7 +2709,10 @@ mod fail2ban {
         }
 
         if !missing_lines.is_empty() {
-            if let Some(pos) = lines.iter().position(|l| l.trim().eq_ignore_ascii_case("[default]")) {
+            if let Some(pos) = lines
+                .iter()
+                .position(|l| l.trim().eq_ignore_ascii_case("[default]"))
+            {
                 for (idx, line_to_insert) in missing_lines.into_iter().enumerate() {
                     lines.insert(pos + 1 + idx, line_to_insert);
                 }
@@ -2569,7 +2759,8 @@ mod fail2ban {
 
         #[test]
         fn test_parse_fail2ban_log_line() {
-            let ban_line = "2026-09-16 12:25:01,123 fail2ban.actions [1234]: NOTICE [sshd] Ban 192.168.1.10";
+            let ban_line =
+                "2026-09-16 12:25:01,123 fail2ban.actions [1234]: NOTICE [sshd] Ban 192.168.1.10";
             let ev1 = parse_fail2ban_log_line(ban_line).unwrap();
             assert_eq!(ev1.action, "ban");
             assert_eq!(ev1.ip, "192.168.1.10");
@@ -2582,7 +2773,8 @@ mod fail2ban {
             assert_eq!(ev2.ip, "10.0.0.99");
             assert_eq!(ev2.jail, "sshd");
 
-            let unban_line = "2026-09-16 13:25:01,789 fail2ban.actions [1234]: NOTICE [sshd] Unban 192.168.1.10";
+            let unban_line =
+                "2026-09-16 13:25:01,789 fail2ban.actions [1234]: NOTICE [sshd] Unban 192.168.1.10";
             let ev3 = parse_fail2ban_log_line(unban_line).unwrap();
             assert_eq!(ev3.action, "unban");
             assert_eq!(ev3.ip, "192.168.1.10");
@@ -2840,7 +3032,9 @@ mod crowdsec {
             );
         }
 
-        let is_active_cmd = Command::new("systemctl").args(["is-active", "crowdsec"]).output();
+        let is_active_cmd = Command::new("systemctl")
+            .args(["is-active", "crowdsec"])
+            .output();
         let active = is_active_cmd
             .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "active")
             .unwrap_or(false);
@@ -2929,12 +3123,16 @@ mod crowdsec {
         };
 
         let action = if req.enabled { "start" } else { "stop" };
-        let res = Command::new("systemctl").args([action, "crowdsec"]).output();
+        let res = Command::new("systemctl")
+            .args([action, "crowdsec"])
+            .output();
 
         match res {
             Ok(o) if o.status.success() => {
                 if req.enabled {
-                    let _ = Command::new("systemctl").args(["enable", "crowdsec"]).output();
+                    let _ = Command::new("systemctl")
+                        .args(["enable", "crowdsec"])
+                        .output();
                 }
                 get_status_linux()
             }
@@ -2956,15 +3154,31 @@ mod crowdsec {
         };
 
         let ip = req.ip.trim();
-        if ip.is_empty() || ip.contains(' ') || ip.contains(';') || ip.contains('&') || ip.contains('|') {
+        if ip.is_empty()
+            || ip.contains(' ')
+            || ip.contains(';')
+            || ip.contains('&')
+            || ip.contains('|')
+        {
             return CommandOutcome::failed("Invalid IP address".to_string());
         }
 
         let duration = req.duration.unwrap_or_else(|| "4h".to_string());
-        let reason = req.reason.unwrap_or_else(|| "Manual ban from SecuryBlack".to_string());
+        let reason = req
+            .reason
+            .unwrap_or_else(|| "Manual ban from SecuryBlack".to_string());
 
         let res = Command::new("cscli")
-            .args(["decisions", "add", "--ip", ip, "--duration", &duration, "--reason", &reason])
+            .args([
+                "decisions",
+                "add",
+                "--ip",
+                ip,
+                "--duration",
+                &duration,
+                "--reason",
+                &reason,
+            ])
             .output();
 
         match res {
@@ -2993,7 +3207,12 @@ mod crowdsec {
         };
 
         let ip = req.ip.trim();
-        if ip.is_empty() || ip.contains(' ') || ip.contains(';') || ip.contains('&') || ip.contains('|') {
+        if ip.is_empty()
+            || ip.contains(' ')
+            || ip.contains(';')
+            || ip.contains('&')
+            || ip.contains('|')
+        {
             return CommandOutcome::failed("Invalid IP address".to_string());
         }
 
@@ -3021,7 +3240,8 @@ mod crowdsec {
     fn get_alerts_linux(payload: serde_json::Value) -> CommandOutcome {
         use std::process::Command;
 
-        let req: GetAlertsPayload = serde_json::from_value(payload).unwrap_or(GetAlertsPayload { limit: Some(50) });
+        let req: GetAlertsPayload =
+            serde_json::from_value(payload).unwrap_or(GetAlertsPayload { limit: Some(50) });
         let limit = req.limit.unwrap_or(50).clamp(1, 200).to_string();
 
         let res = Command::new("cscli")
@@ -3061,7 +3281,9 @@ mod crowdsec {
 
         match res {
             Ok(o) if o.status.success() => {
-                let _ = Command::new("systemctl").args(["reload", "crowdsec"]).output();
+                let _ = Command::new("systemctl")
+                    .args(["reload", "crowdsec"])
+                    .output();
                 CommandOutcome::ok(
                     serde_json::json!({ "success": true, "collection": name }).to_string(),
                 )
@@ -3093,18 +3315,29 @@ mod crowdsec {
                 .output();
 
             if let Err(e) = script_install {
-                return CommandOutcome::failed(format!("Failed to download CrowdSec setup script: {e}"));
+                return CommandOutcome::failed(format!(
+                    "Failed to download CrowdSec setup script: {e}"
+                ));
             }
 
             let install_res = Command::new("apt-get")
                 .env("DEBIAN_FRONTEND", "noninteractive")
-                .args(["install", "-y", "crowdsec", "crowdsec-firewall-bouncer-iptables"])
+                .args([
+                    "install",
+                    "-y",
+                    "crowdsec",
+                    "crowdsec-firewall-bouncer-iptables",
+                ])
                 .output();
 
             match install_res {
                 Ok(o) if o.status.success() => {
-                    let _ = Command::new("systemctl").args(["enable", "--now", "crowdsec"]).output();
-                    let _ = Command::new("systemctl").args(["enable", "--now", "crowdsec-firewall-bouncer"]).output();
+                    let _ = Command::new("systemctl")
+                        .args(["enable", "--now", "crowdsec"])
+                        .output();
+                    let _ = Command::new("systemctl")
+                        .args(["enable", "--now", "crowdsec-firewall-bouncer"])
+                        .output();
                     get_status_linux()
                 }
                 Ok(o) => {
@@ -3119,16 +3352,25 @@ mod crowdsec {
                 .output();
 
             if let Err(e) = script_install {
-                return CommandOutcome::failed(format!("Failed to download CrowdSec setup script: {e}"));
+                return CommandOutcome::failed(format!(
+                    "Failed to download CrowdSec setup script: {e}"
+                ));
             }
 
             let install_res = Command::new("dnf")
-                .args(["install", "-y", "crowdsec", "crowdsec-firewall-bouncer-iptables"])
+                .args([
+                    "install",
+                    "-y",
+                    "crowdsec",
+                    "crowdsec-firewall-bouncer-iptables",
+                ])
                 .output();
 
             match install_res {
                 Ok(o) if o.status.success() => {
-                    let _ = Command::new("systemctl").args(["enable", "--now", "crowdsec"]).output();
+                    let _ = Command::new("systemctl")
+                        .args(["enable", "--now", "crowdsec"])
+                        .output();
                     get_status_linux()
                 }
                 Ok(o) => {
@@ -3142,6 +3384,3 @@ mod crowdsec {
         }
     }
 }
-
-
-

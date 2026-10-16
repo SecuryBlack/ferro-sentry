@@ -77,7 +77,9 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                             )
                             .await,
                     );
-                } else if stdout.contains("Chain INPUT (policy DROP)") || stdout.contains("Chain INPUT (policy REJECT)") {
+                } else if stdout.contains("Chain INPUT (policy DROP)")
+                    || stdout.contains("Chain INPUT (policy REJECT)")
+                {
                     findings.push(
                         engine
                             .build_resolved_event("firewall_auditor", "iptables_default_accept")
@@ -98,11 +100,20 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
             false
         };
 
-        if ufw_is_active && (has_command("docker") || std::path::Path::new("/var/run/docker.sock").exists()) {
+        if ufw_is_active
+            && (has_command("docker") || std::path::Path::new("/var/run/docker.sock").exists())
+        {
             let mut docker_user_configured = false;
-            if let Ok(output) = Command::new("iptables").args(&["-S", "DOCKER-USER"]).output() {
+            if let Ok(output) = Command::new("iptables")
+                .args(&["-S", "DOCKER-USER"])
+                .output()
+            {
                 let s = String::from_utf8_lossy(&output.stdout);
-                let lines: Vec<&str> = s.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+                let lines: Vec<&str> = s
+                    .lines()
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty())
+                    .collect();
                 let has_filter_rules = lines.iter().any(|line| {
                     line.contains("DROP")
                         || line.contains("REJECT")
@@ -122,7 +133,10 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
                 let s = String::from_utf8_lossy(&output.stdout);
                 for line in s.lines() {
                     let trimmed = line.trim();
-                    if trimmed.contains("0.0.0.0:") || trimmed.contains(":::") || trimmed.contains("[::]:") {
+                    if trimmed.contains("0.0.0.0:")
+                        || trimmed.contains(":::")
+                        || trimmed.contains("[::]:")
+                    {
                         exposed_ports.push(trimmed.to_string());
                     }
                 }
