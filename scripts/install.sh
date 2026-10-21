@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Ferro-Sentry — Install script
 # Usage (generic):    curl -fsSL https://install.ferrosentry.dev | bash
-# Usage (SecuryBlack): curl -fsSL https://install.ferrosentry.dev | bash -s -- --endpoint ingest.securyblack.com --token <TOKEN>
+# With SecuryBlack:  installed by Nexus Agent, which runs this script with --mode agent
+#                     (events go to Nexus on 127.0.0.1:4317).
 set -euo pipefail
 
 SB_AGENT_LABEL="ferro-sentry"
@@ -63,10 +64,10 @@ sb_install_binary "${TMP_DIR}/${ASSET_NAME}" "$BINARY_NAME" "$INSTALL_DIR"
 mkdir -p "$CONFIG_DIR"
 chmod 700 "$CONFIG_DIR"
 
-# Apply local_agent defaults
-if [[ "${MODE:-}" == "local_agent" ]]; then
-  ENDPOINT="${ENDPOINT:-http://localhost:8080}"
-  sb_info "Mode: local_agent — Ferro-Sentry will send events to localhost:8080"
+# Agent mode: events go to Nexus on 127.0.0.1:4317 (fixed in the binary), so no endpoint is needed
+if [[ "${MODE:-}" == "agent" || "${MODE:-}" == "local_agent" ]]; then
+  ENDPOINT="${ENDPOINT:-http://127.0.0.1:4317}"
+  sb_info "Mode: agent — Ferro-Sentry will send events to Nexus Agent on 127.0.0.1:4317"
 fi
 
 # Ask interactively if not provided via arguments
