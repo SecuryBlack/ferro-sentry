@@ -20,198 +20,82 @@ Follow the agent-specific installation and configuration instructions below. Use
 > **Part of the SecuryBlack ecosystem:**
 > [OxiPulse (Metrics)](https://github.com/securyblack/oxi-pulse) · **FerroSentry (Security)** · [CromoForge (Docker/PostgreSQL)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
 
-> **Scope:** Audit and command-handling code is implemented. Remediation requires an explicit action and applicable configuration safeguards. Expanded EDR and automated response descriptions are development references, not a guarantee that every capability below is available.
+> **Scope:** this README lists what the code does today. Every audit runs on a schedule (hourly); there is no real-time sensor yet. Remediation only runs when you ask for it from the panel.
 
 ---
 
-## 🛡️ Philosophy
+## What it does
 
-- **Native Rust:** Native implementation focused on efficient resource use. Resource consumption depends on the workload; no benchmark is asserted here.
-- **Independent Modules:** Each security sensor runs inside its own isolated `tokio` async task.
-- **Dual Output Modes:** Transmits events locally via **Conduit / Nexus** (bidirectional tunnel) or **direct** to the SecuryBlack API.
-- **Real-Time Alerts + Scheduled Audits:** Combines event-driven threat detection with recurring posture scans.
-- **Cross-Platform:** Linux and Windows first-class support.
+- **Hourly host audit.** Twelve modules check the server and report findings. Firewall, intrusion prevention, permission, process and update findings close on their own once the condition is gone.
+- **Remediation on request.** From the SecuryBlack panel you can harden SSH, enable unattended upgrades, install and manage fail2ban, manage UFW rules and CrowdSec. Critical actions require Sudo Mode (passkey) in the panel.
+- **Signed self-updates** through `sb-agent-core`: daily check, ed25519-signed releases.
 
----
+## Audit modules
 
-## 📋 Modules & Capabilities
+All modules run on Linux. The Windows build only runs the port scanner and file integrity checks.
 
-### 🔴 Real-Time Threat Detection (EDR)
+| Module | What it checks | Rules |
+|---|---|---|
+| **SSH Auditor** | `sshd_config` and `sshd_config.d`: root login, password authentication, port 22, X11 forwarding, `MaxAuthTries` | SSH-001 … SSH-005 |
+| **Firewall Auditor** | UFW inactive, iptables `INPUT` policy `ACCEPT`, Docker publishing ports that bypass UFW | FW-001 … FW-003 |
+| **Intrusion Prevention** | Neither fail2ban nor CrowdSec running, fail2ban `sshd` jail not covering the real SSH port, CrowdSec without a bouncer | IPS-001 … IPS-003 |
+| **Port Scanner** | Listening sockets (`/proc/net` on Linux): sensitive or often-unauthenticated services exposed on all interfaces, Telnet/FTP | — |
+| **Vulnerability Scanner** | Pending package updates (and how many are security updates), pending reboot, `unattended-upgrades` missing or off (apt) | VULN-001 |
+| **Permission Auditor** | SUID/SGID binaries in `/tmp`, `/var/tmp`, `/dev/shm`; world-writable critical files in `/etc`; sudo commands not logged | PERM-001 … PERM-003 |
+| **Persistence Hunter** | Entries in `/etc/crontab` and `/etc/cron.d` that run from temporary directories or download payloads | PERSIST-001 |
+| **Process Sentinel** | Processes running from temporary directories; processes whose binary was deleted (stale after an upgrade, or suspicious) | PROC-001, PROC-002 |
+| **File Integrity** | SHA-256 changes between scans in `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`, `sshd_config`, `/etc/crontab`, `/etc/hosts` | FIM-001 |
+| **Auth Monitor** | Failed logins in `/var/log/auth.log` since the previous scan | AUTH-001 |
+| **SSL Auditor** | Lists certificates in `/etc/letsencrypt/live` (informational; expiry is checked externally by SecuryBlack uptime monitoring) | SSL-001 |
 
-| Module | Detection Scope |
+## Output modes
+
+Set `mode` in `/etc/ferro-sentry/config.toml`:
+
+| Mode | Where events go |
 |---|---|
-| **Process Sentinel** | Newly spawned processes, shell children, execution from `/tmp` or temp paths, orphaned processes, memory injection, running deleted binaries (`/proc/[pid]/exe` dangling). |
-| **File Integrity Monitor (FIM)** | Unauthorized changes to `/etc/passwd`, system binaries, critical configuration files, certificates. Cryptographic baseline tracking using SHA-256 snapshots. |
-| **Network Watch** | Suspicious outbound connections, reverse shells, C2 beaconing, internal network scanning, connections to known Tor/proxy/threat IPs. |
-| **Auth Guard** | Failed SSH logins, brute-force mitigation, sudo abuse, newly added user accounts, password modifications, off-hour authentications. |
-| **Persistence Hunter** | Unauthorized cron jobs, systemd services, Windows scheduled tasks, startup run keys, modified `.bashrc`/`.profile`, Windows DLL hijacking. |
-| **Log Watcher** | Real-time tailing of system logs (`auth.log`, `journald`, Windows Event Log) matching external YAML regex rules. |
-
-### 🔵 Posture & Hardening Audits (Light Host CSPM)
-
-| Module | Audit Scope |
-|---|---|
-| **Port Scanner** | Open ports on local interfaces, services listening on `0.0.0.0` unnecessarily, non-standard listening ports. Rapid SYN scan of localhost. |
-| **Firewall Auditor** | `iptables`/`nftables`/`ufw` (Linux) and Windows Firewall rule verification. Detects overly permissive rules (`ANY/ANY`, `0.0.0.0/0`), missing stateful inspection, missing default drop policies. |
-| **Vulnerability Scanner** | Installed software versions vs CVE database, insecure service configs (SSH root login, TLS 1.0/1.1, SMBv1), pending kernel security updates. |
-| **SSL/TLS Auditor** | Expired certificates, self-signed certs, weak cipher suites (RC4/DES, small DH parameters), certificates nearing expiration. |
-| **SSH Auditor** | Hardening audit of `sshd_config`: `PermitRootLogin`, `PasswordAuthentication`, non-standard port, `X11Forwarding`, missing `AllowUsers`, obsolete versions. |
-| **Permission Auditor** | Suspicious SUID/SGID binaries, world-writable files in critical system directories, duplicate UID 0 users, unauthorized `sudo`/`wheel` memberships. |
-| **Secrets Hunter** | Plaintext credentials in configuration files (`.env`, `.yml`, `.json`), API keys, unencrypted private keys, tokens leaked into log files. |
-| **Kernel Security** | Kernel mitigation status (`ASLR`, `NX`, `seccomp`, `AppArmor`/`SELinux`, `KPTI`, `SMEP`/`SMAP`), unpatched kernel vulnerabilities. |
-| **Listening Services** | Unauthenticated services, exposed databases (`MongoDB`, `Redis`, `Elasticsearch` without auth), legacy plaintext protocols (`Telnet`, `FTP`). |
-| **Container Security** | Privileged Docker containers, exposed `/var/run/docker.sock`, outdated base images, containers with `--net=host`, cloud metadata abuse (`169.254.169.254`). |
-| **Backup Finder** | Exposed database dumps (`.sql`, `.tar.gz`, `.zip`, `.bak`) stored in public web paths or with weak file permissions. |
-| **Network Topology** | Interfaces running in promiscuous mode, suspicious static routes, unauthorized overlay tunnels (WireGuard, OpenVPN, GRE), ARP spoofing. |
-| **Malware Scanner** | YARA signature scanning across critical temporary directories (`/tmp`, `/var/tmp`, `$HOME`), known disk IoCs. |
+| `agent` | Nexus Agent on `127.0.0.1:4317` (gRPC), which tunnels them to SecuryBlack. This is how the SecuryBlack panel installs it. |
+| `direct` | HTTPS `POST {api_url}/agents/me/security-events` with the agent token. |
+| `local_file` | JSON lines in `local_file_path`. The default when there is no config. |
 
 ---
 
-## 🏗️ Architecture
+## Installation
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                            SECURYBLACK CLOUD                                │
-│  ┌──────────────┐      ┌──────────────────────────────┐                     │
-│  │  Dashboard   │◄─────┤  Security Events API         │                     │
-│  │  (Alerts)    │      │  / Posture Findings API      │                     │
-│  └──────────────┘      └──────────────────────────────┘                     │
-└─────────────────────────────────────────────────────────────────────────────┘
-                               ▲
-                               │ Security Events (JSON / OTLP Logs)
-                    ┌─────────┴──────────┐
-                    │  Conduit / Tunnel  │   ← default
-                    └─────────┬──────────┘
-┌─────────────────────────────┼───────────────────────────────┐
-│     CLIENT SERVER           │                               │
-│                             │                               │
-│  ┌──────────────────────────┴─────────────────────────┐     │
-│  │  FerroSentry (Rust Daemon)                         │     │
-│  │                                                    │     │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌────────────┐ │     │
-│  │  │ REAL-TIME   │  │ AUDIT       │  │ SCHEDULER  │ │     │
-│  │  │ SENSORS     │  │ SCANNERS    │  │ (cron)     │ │     │
-│  │  │             │  │             │  │            │ │     │
-│  │  │ • Process   │  │ • PortScan  │  │ • Daily    │ │     │
-│  │  │ • FIM       │  │ • Firewall  │  │ • Hourly   │ │     │
-│  │  │ • Network   │  │ • VulnScan  │  │ • OnDemand │ │     │
-│  │  │ • Auth      │  │ • SSH       │  │            │ │     │
-│  │  │ • Persist   │  │ • Secrets   │  │            │ │     │
-│  │  │ • Logs      │  │ • Perms     │  │            │ │     │
-│  │  └──────┬──────┘  └──────┬──────┘  └─────┬──────┘ │     │
-│  │         └─────────────────┴───────────────┘        │     │
-│  │  ┌────────────────────────────────────────────────┐ │     │
-│  │  │           EVENT ENGINE                         │ │     │
-│  │  │  • Deduplication (5-minute sliding window)     │ │     │
-│  │  │  • Enrichment (host, user, SHA-256 hash, geo)  │ │     │
-│  │  │  • Severity scoring                            │ │     │
-│  │  │  • Throttling / rate limiting                  │ │     │
-│  │  └────────────────────┬───────────────────────────┘ │     │
-│  │  ┌────────────────────┴───────────────────────────┐ │     │
-│  │  │           OUTPUT LAYER                         │ │     │
-│  │  │  → Local Conduit (gRPC / HTTP)   [default]     │ │     │
-│  │  │  → Direct SecuryBlack API        [fallback]    │ │     │
-│  │  │  → Local JSONL Log File          [debug]       │ │     │
-│  │  └────────────────────────────────────────────────┘ │     │
-│  └─────────────────────────────────────────────────────┘     │
-└─────────────────────────────────────────────────────────────┘
-```
+### With SecuryBlack
 
-### Event Payload Formats
+Use the install command from the panel. It installs Nexus Agent, which runs this installer with `--mode agent`.
 
-**Security Event** (Real-time alert):
-```json
-{
-  "event_type": "process_spawn",
-  "category": "intrusion_detection",
-  "severity": "critical",
-  "timestamp": "2026-04-28T16:45:00Z",
-  "host": "web-server-01",
-  "agent": "ferro-sentry",
-  "module": "process_sentinel",
-  "details": {
-    "pid": 1337,
-    "command": "/tmp/.xmrig --donate-level 1",
-    "parent_pid": 1,
-    "parent_command": "systemd",
-    "user": "www-data",
-    "hash_sha256": "aabbcc...",
-    "rule": "process_from_tmp"
-  }
-}
-```
+### Standalone
 
-**Posture Finding** (Audit scan finding):
-```json
-{
-  "event_type": "finding",
-  "category": "posture",
-  "severity": "high",
-  "timestamp": "2026-04-28T16:45:00Z",
-  "host": "web-server-01",
-  "agent": "ferro-sentry",
-  "module": "ssh_auditor",
-  "details": {
-    "finding": "PermitRootLogin=yes",
-    "recommendation": "Set PermitRootLogin=no or prohibit-password",
-    "file": "/etc/ssh/sshd_config",
-    "benchmark": "CIS-5.2.8"
-  }
-}
-```
-
----
-
-## 🚀 Quickstart & Installation
-
-### Linux — One-line Install
 ```bash
 curl -fsSL https://install.ferrosentry.dev | sudo bash
 ```
 
-### Windows — PowerShell (Administrator)
+Windows (PowerShell as Administrator):
+
 ```powershell
 irm https://install.ferrosentry.dev | iex
 ```
 
-### Standalone Interactive TUI
-Inspect security posture, active alerts, and firewall rules in real time without needing a cloud connection:
-```bash
-ferrosentry tui
-```
+Check it with `journalctl -u ferro-sentry -f`.
 
 ---
 
-## 🦀 Rust Technology Stack
+## Built with
 
-| Layer | Crate |
-|---|---|
-| Async runtime | `tokio` (full) |
-| Logging / tracing | `tracing` + `tracing-subscriber` + `tracing-appender` |
-| Serialization | `serde` + `serde_json` + `serde_yaml` (detection rules) + `chrono` |
-| System processes | `sysinfo` |
-| File system monitoring | `notify` (inotify, ReadDirectoryChangesW) |
-| Hashing (FIM) | `sha2` + `hex` |
-| Pattern matching | `regex` |
-| Unix accounts | `uzers` |
-| Windows APIs | `windows` + `winreg` |
-| HTTP client | `reqwest` |
-| gRPC / OTLP Logs | `tonic` + `opentelemetry` + `opentelemetry-otlp` |
-| Network inspection | `tokio::net` + raw sockets |
-| Malware inspection | `yara` (optional) |
-| Terminal UI | `ratatui` + `crossterm` |
-| Configuration | `toml` + `serde` |
+`tokio`, `tonic`/`prost` (gRPC to Nexus), `reqwest` with rustls (direct mode), `serde`, `sha2` (file integrity), `tracing`, and `sb-agent-core` (signed updater, command intake).
 
 ---
 
 ## 🌐 SecuryBlack Open Source Ecosystem
 
-FerroSentry is the security and EDR pillar of the SecuryBlack modular agent suite:
+FerroSentry is the security pillar of the SecuryBlack modular agent suite:
 
 | Agent | Core Focus | Official Website | Repository |
 | :--- | :--- | :--- | :--- |
 | **OxiPulse** | Server telemetry and OTLP metrics | [oxipulse.dev](https://oxipulse.dev) | [securyblack/oxi-pulse](https://github.com/securyblack/oxi-pulse) |
-| **FerroSentry** | Lightweight EDR, auditd, brute-force mitigation & firewall | [ferrosentry.dev](https://ferrosentry.dev) | [securyblack/ferro-sentry](https://github.com/securyblack/ferro-sentry) |
+| **FerroSentry** | Security audits, firewall and fail2ban/CrowdSec management | [ferrosentry.dev](https://ferrosentry.dev) | [securyblack/ferro-sentry](https://github.com/securyblack/ferro-sentry) |
 | **CromoForge** | Docker containers, logs & PostgreSQL management | [cromoforge.dev](https://cromoforge.dev) | [securyblack/cromo-forge](https://github.com/securyblack/cromo-forge) |
 | **TitanVault** | Streaming backups (restore workflow not verified) | [titanvault.dev](https://titanvault.dev) | [securyblack/titan-vault](https://github.com/securyblack/titan-vault) |
 
