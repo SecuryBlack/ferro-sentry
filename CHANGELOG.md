@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.30] - 2026-10-29
+
+### Security
+- **Fail2ban**: The whitelist only accepts IP addresses and CIDR ranges, and `bantime`/`findtime` only accept a number with an optional unit (`10m`, `1h`, `1w`, `-1`). Before, a value with line breaks could add new sections or actions to `jail.local`, which fail2ban runs as root. If any entry is invalid, the whole change is rejected and nothing is written.
+
 ## [0.2.29] - 2026-10-23
 
 ### Added
