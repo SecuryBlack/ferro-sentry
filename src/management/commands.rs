@@ -2281,7 +2281,16 @@ mod fail2ban {
 
         for ip in req.ips {
             let trimmed = ip.trim().to_string();
-            if !trimmed.is_empty() && !cleaned_ips.contains(&trimmed) {
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Written verbatim into jail.local: anything but an IP/CIDR could inject config
+            if !is_valid_ip_or_cidr(&trimmed) {
+                return CommandOutcome::failed(format!(
+                    "invalid whitelist entry {trimmed:?}: expected an IP address or CIDR network"
+                ));
+            }
+            if !cleaned_ips.contains(&trimmed) {
                 cleaned_ips.push(trimmed);
             }
         }
@@ -2615,6 +2624,17 @@ mod fail2ban {
             Err(e) => return CommandOutcome::failed(format!("invalid payload: {e}")),
         };
 
+        // Written verbatim into jail.local: reject anything that isn't a plain duration
+        for (key, val) in [("bantime", &req.bantime), ("findtime", &req.findtime)] {
+            if let Some(v) = val {
+                if !is_valid_f2b_duration(v) {
+                    return CommandOutcome::failed(format!(
+                        "invalid {key} {v:?}: expected an integer with optional s/m/h/d/w suffix"
+                    ));
+                }
+            }
+        }
+
         let jail_local = Path::new("/etc/fail2ban/jail.local");
         let existing = if jail_local.exists() {
             fs::read_to_string(jail_local).unwrap_or_default()
@@ -2666,6 +2686,34 @@ mod fail2ban {
                 CommandOutcome::failed(format!("Failed to execute fail2ban-client reload: {e}"))
             }
         }
+    }
+
+    /// IP address or CIDR network (`addr/prefix`), as accepted by fail2ban's ignoreip.
+    #[cfg(any(target_os = "linux", test))]
+    fn is_valid_ip_or_cidr(s: &str) -> bool {
+        use std::net::IpAddr;
+        let (addr, prefix) = match s.split_once('/') {
+            Some((a, p)) => (a, Some(p)),
+            None => (s, None),
+        };
+        let Ok(ip) = addr.parse::<IpAddr>() else {
+            return false;
+        };
+        match prefix {
+            None => true,
+            Some(p) => {
+                let max = if ip.is_ipv4() { 32 } else { 128 };
+                p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u8>().is_ok_and(|n| n <= max)
+            }
+        }
+    }
+
+    /// fail2ban duration: `-?\d+[smhdw]?` (e.g. "600", "10m", "1w", "-1" = permanent).
+    #[cfg(any(target_os = "linux", test))]
+    fn is_valid_f2b_duration(s: &str) -> bool {
+        let s = s.strip_prefix('-').unwrap_or(s);
+        let digits = s.strip_suffix(['s', 'm', 'h', 'd', 'w']).unwrap_or(s);
+        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
     }
 
     #[cfg(any(target_os = "linux", test))]
@@ -2726,6 +2774,51 @@ mod fail2ban {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn test_is_valid_ip_or_cidr() {
+            for ok in [
+                "1.2.3.4",
+                "10.0.0.0/8",
+                "127.0.0.1/8",
+                "::1",
+                "2001:db8::/32",
+                "0.0.0.0/0",
+            ] {
+                assert!(is_valid_ip_or_cidr(ok), "{ok}");
+            }
+            for bad in [
+                "1.2.3.4\n[sshd]\naction = touch /tmp/pwned",
+                "1.2.3.4 5.6.7.8",
+                "1.2.3.4/33",
+                "::1/129",
+                "1.2.3.4/",
+                "1.2.3.4/+8",
+                "example.com",
+                "",
+            ] {
+                assert!(!is_valid_ip_or_cidr(bad), "{bad:?}");
+            }
+        }
+
+        #[test]
+        fn test_is_valid_f2b_duration() {
+            for ok in ["600", "10m", "1h", "24h", "1w", "5s", "1d", "-1"] {
+                assert!(is_valid_f2b_duration(ok), "{ok}");
+            }
+            for bad in [
+                "",
+                "-",
+                "m",
+                "1x",
+                "1h\n[sshd]\naction = x",
+                "1h 2m",
+                "--1",
+                "1.5h",
+            ] {
+                assert!(!is_valid_f2b_duration(bad), "{bad:?}");
+            }
+        }
 
         #[test]
         fn test_parse_jail_list() {
