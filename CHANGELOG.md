@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **SSH hardening**: The fix now closes password login on cloud images too (Ubuntu with cloud-init and `ssh_pwauth`). Its file was `99-securyblack-hardening.conf`, read after `50-cloud-init.conf`, and sshd keeps the first value it reads, so `PasswordAuthentication yes` stayed on while the panel reported success. The file is now `00-securyblack-hardening.conf` (the old one is removed), and after writing it the agent checks with `sshd -T` that every setting took effect; if one did not, it rolls everything back and says which.
+- **SSH audit**: Findings use the settings sshd actually applies (`sshd -T`), not a guess from the files, which picked up whichever value came last. Without root it reads the files in sshd's order. The fail2ban port check uses the same value.
+
 ## [0.2.30] - 2026-10-29
 
 ### Security

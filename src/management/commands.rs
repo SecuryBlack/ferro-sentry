@@ -1142,28 +1142,33 @@ mod ssh_hardening {
             }
         };
 
-        let mut directives = Vec::new();
+        let mut wanted: Vec<(&str, String)> = Vec::new();
         if opts.disable_password_auth {
-            directives.push("PasswordAuthentication no".to_string());
-            directives.push("KbdInteractiveAuthentication no".to_string());
-            directives.push("ChallengeResponseAuthentication no".to_string());
+            wanted.push(("PasswordAuthentication", "no".into()));
+            wanted.push(("KbdInteractiveAuthentication", "no".into()));
+            wanted.push(("ChallengeResponseAuthentication", "no".into()));
         }
         if opts.disable_root_login {
-            directives.push("PermitRootLogin prohibit-password".to_string());
+            wanted.push(("PermitRootLogin", "prohibit-password".into()));
         }
         if opts.disable_x11_forwarding {
-            directives.push("X11Forwarding no".to_string());
+            wanted.push(("X11Forwarding", "no".into()));
         }
         let max_tries = opts.max_auth_tries.clamp(1, 6);
-        directives.push(format!("MaxAuthTries {max_tries}"));
+        wanted.push(("MaxAuthTries", max_tries.to_string()));
+        let directives: Vec<String> = wanted.iter().map(|(k, v)| format!("{k} {v}")).collect();
 
         let content_to_apply = format!(
             "# SecuryBlack SSH Hardening - Generated automatically\n{}\n",
             directives.join("\n")
         );
 
+        // sshd keeps the first value it reads and loads drop-ins in name order,
+        // so ours must sort first (cloud images ship 50-cloud-init.conf etc.).
         let sshd_config_d = Path::new("/etc/ssh/sshd_config.d");
-        let dropin_file = sshd_config_d.join("99-securyblack-hardening.conf");
+        let dropin_file = sshd_config_d.join("00-securyblack-hardening.conf");
+        let legacy_dropin = sshd_config_d.join("99-securyblack-hardening.conf");
+        let legacy_content = fs::read_to_string(&legacy_dropin).ok();
         let main_config = Path::new("/etc/ssh/sshd_config");
         let main_backup = Path::new("/etc/ssh/sshd_config.sb-bak");
 
@@ -1237,7 +1242,20 @@ mod ssh_hardening {
                     "Failed to write drop-in configuration: {e}"
                 ));
             }
+            let _ = fs::remove_file(&legacy_dropin);
         }
+
+        let rollback = || {
+            if used_dropin {
+                let _ = fs::remove_file(&dropin_file);
+                if let Some(old) = &legacy_content {
+                    let _ = fs::write(&legacy_dropin, old);
+                }
+            }
+            if main_backup.exists() {
+                let _ = fs::copy(main_backup, main_config);
+            }
+        };
 
         // Validate syntax with sshd -t
         let test_res = Command::new(&sshd_bin).arg("-t").output();
@@ -1247,13 +1265,7 @@ mod ssh_hardening {
         };
 
         if !valid {
-            // Rollback immediately
-            if used_dropin {
-                let _ = fs::remove_file(&dropin_file);
-            }
-            if main_backup.exists() {
-                let _ = fs::copy(main_backup, main_config);
-            }
+            rollback();
             let err_msg = test_res
                 .map(|o| {
                     format!(
@@ -1265,6 +1277,23 @@ mod ssh_hardening {
                 .unwrap_or_else(|e| e.to_string());
             return CommandOutcome::failed(format!(
                 "SSH configuration test (sshd -t) failed, rolled back changes: {err_msg}"
+            ));
+        }
+
+        // Valid syntax is not enough: check sshd really ends up with our values.
+        let Some(effective) = crate::modules::ssh_auditor::effective_sshd_config() else {
+            rollback();
+            return CommandOutcome::failed(
+                "Could not read the effective SSH configuration (sshd -T), rolled back changes"
+                    .to_string(),
+            );
+        };
+        let missing = not_applied(&wanted, &effective);
+        if !missing.is_empty() {
+            rollback();
+            return CommandOutcome::failed(format!(
+                "SSH settings overridden by another sshd config file, rolled back changes. Not applied: {}",
+                missing.join(", ")
             ));
         }
 
@@ -1361,11 +1390,68 @@ mod ssh_hardening {
         false
     }
 
+    /// Wanted directives whose effective value (`sshd -T`) differs, as
+    /// `Key wanted (effective: x)`. Keys this sshd does not print are skipped:
+    /// `ChallengeResponseAuthentication` is just an alias on OpenSSH ≥ 8.7.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn not_applied(
+        wanted: &[(&str, String)],
+        effective: &std::collections::HashMap<String, String>,
+    ) -> Vec<String> {
+        // sshd -T prints prohibit-password under its old name.
+        let norm = |v: &str| match v.to_lowercase().as_str() {
+            "without-password" => "prohibit-password".to_string(),
+            other => other.to_string(),
+        };
+        wanted
+            .iter()
+            .filter_map(|(key, want)| {
+                let got = effective.get(&key.to_lowercase())?;
+                (norm(got) != norm(want)).then(|| format!("{key} {want} (effective: {got})"))
+            })
+            .collect()
+    }
+
     #[cfg(not(target_os = "linux"))]
     fn apply_ssh_hardening(_opts: SshHardeningPayload) -> CommandOutcome {
         CommandOutcome::failed(
             "SSH hardening remediation is only supported on Linux hosts".to_string(),
         )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::not_applied;
+        use std::collections::HashMap;
+
+        fn sshd_t(out: &str) -> HashMap<String, String> {
+            out.lines()
+                .filter_map(|l| l.split_once(' '))
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        }
+
+        #[test]
+        fn detects_overridden_and_accepts_aliases() {
+            let wanted = vec![
+                ("PasswordAuthentication", "no".to_string()),
+                ("ChallengeResponseAuthentication", "no".to_string()),
+                ("PermitRootLogin", "prohibit-password".to_string()),
+                ("MaxAuthTries", "3".to_string()),
+            ];
+            // Ubuntu cloud image: 50-cloud-init.conf won over our drop-in.
+            let eff = sshd_t(
+                "passwordauthentication yes\npermitrootlogin without-password\nmaxauthtries 3",
+            );
+            assert_eq!(
+                not_applied(&wanted, &eff),
+                vec!["PasswordAuthentication no (effective: yes)"]
+            );
+            let eff = sshd_t(
+                "passwordauthentication no\npermitrootlogin without-password\nmaxauthtries 3",
+            );
+            assert!(not_applied(&wanted, &eff).is_empty());
+        }
     }
 }
 
