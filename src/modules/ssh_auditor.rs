@@ -14,7 +14,9 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
         return Ok(findings);
     }
 
-    let parsed_config = parse_sshd_configs(&sshd_configs);
+    // Prefer what sshd actually uses; fall back to reading the files ourselves.
+    let parsed_config =
+        effective_sshd_config().unwrap_or_else(|| parse_sshd_configs(&sshd_configs));
 
     // Rule 1: PermitRootLogin
     if let Some(val) = parsed_config.get("permitrootlogin") {
@@ -162,10 +164,9 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
 
     Ok(findings)
 }
-#[allow(dead_code)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn detect_ssh_port() -> u16 {
-    let configs = find_sshd_configs();
-    let map = parse_sshd_configs(&configs);
+    let map = effective_sshd_config().unwrap_or_else(|| parse_sshd_configs(&find_sshd_configs()));
     map.get("port")
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(22)
@@ -186,42 +187,59 @@ fn find_sshd_configs() -> Vec<String> {
         }
     }
 
-    // Check include directory if on Linux
-    if Path::new("/etc/ssh/sshd_config.d").is_dir() {
-        if let Ok(entries) = fs::read_dir("/etc/ssh/sshd_config.d") {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_file() && p.extension().is_some_and(|ext| ext == "conf") {
-                    if let Some(p_str) = p.to_str() {
-                        files.push(p_str.to_string());
-                    }
-                }
-            }
-        }
+    // Drop-ins go first: Debian/Ubuntu/RHEL put `Include sshd_config.d/*.conf`
+    // at the top of sshd_config, sshd reads them in name order and keeps the
+    // first value it sees.
+    if let Ok(entries) = fs::read_dir("/etc/ssh/sshd_config.d") {
+        let mut dropins: Vec<String> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().is_some_and(|ext| ext == "conf"))
+            .filter_map(|p| p.to_str().map(str::to_string))
+            .collect();
+        dropins.sort();
+        files.splice(0..0, dropins);
     }
 
     files
 }
 
+/// Effective settings as reported by `sshd -T` (needs root). `None` if sshd
+/// is missing or refuses the config.
+pub fn effective_sshd_config() -> Option<HashMap<String, String>> {
+    ["sshd", "/usr/sbin/sshd", "/sbin/sshd"]
+        .iter()
+        .find_map(|bin| {
+            let out = std::process::Command::new(bin).arg("-T").output().ok()?;
+            out.status.success().then(|| {
+                let mut map = HashMap::new();
+                parse_directives(&String::from_utf8_lossy(&out.stdout), &mut map);
+                map
+            })
+        })
+}
+
 fn parse_sshd_configs(paths: &[String]) -> HashMap<String, String> {
     let mut map = HashMap::new();
-
     for path in paths {
         if let Ok(content) = fs::read_to_string(path) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    let key = parts[0].to_lowercase();
-                    let val = parts[1..].join(" ");
-                    map.entry(key).or_insert(val);
-                }
-            }
+            parse_directives(&content, &mut map);
         }
     }
-
     map
+}
+
+/// `Key value` lines, keys lowercased; like sshd, the first value of a key wins.
+fn parse_directives(content: &str, map: &mut HashMap<String, String>) {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() >= 2 {
+            map.entry(parts[0].to_lowercase())
+                .or_insert_with(|| parts[1..].join(" "));
+        }
+    }
 }
