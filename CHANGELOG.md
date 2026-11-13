@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Fail2ban**: Installing fail2ban from the panel now applies its configuration. The package starts fail2ban with its defaults, and the agent wrote `jail.local` afterwards without restarting the service, so the 1-hour ban and the SSH port were never loaded (bans lasted 10 minutes, and with SSH on a port other than 22 the jail watched the wrong one) while the panel reported success. The agent now restarts fail2ban after writing the file, reports an error if the file cannot be written, and checks with `fail2ban-client` that the sshd jail watches the SSH port and uses the 1-hour ban.
+
 ## [0.2.30] - 2026-10-29
 
 ### Security
