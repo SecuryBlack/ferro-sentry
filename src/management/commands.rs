@@ -919,6 +919,22 @@ mod firewall {
             }
         }
 
+        // Anti-lockout: refuse to close the SSH port to everyone. Blocking one source
+        // IP (`from`), rate limiting or UDP-only rules leave SSH reachable.
+        let has_from = req
+            .from
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|f| !f.is_empty() && f != "any" && f != "Anywhere");
+        if matches!(action, "deny" | "reject") && !has_from && proto.as_deref() != Some("udp") {
+            let ssh_port = crate::modules::ssh_auditor::detect_ssh_port();
+            if port_spec_covers(port, ssh_port) {
+                return CommandOutcome::failed(format!(
+                    "refusing to {action} port {port}: SSH listens on {ssh_port} and this rule would lock out remote access"
+                ));
+            }
+        }
+
         let mut args = vec![action.to_string()];
 
         if let Some(from) = req
@@ -1082,6 +1098,41 @@ mod firewall {
                 CommandOutcome::failed(format!("Failed to install UFW: {stderr} {stdout}"))
             }
             Err(e) => CommandOutcome::failed(format!("Failed to execute installer: {e}")),
+        }
+    }
+
+    /// Whether a ufw port spec (`22`, `1000:2000`, `ssh`, `OpenSSH`) includes `port`.
+    #[cfg(any(target_os = "linux", test))]
+    fn port_spec_covers(spec: &str, port: u16) -> bool {
+        if spec.eq_ignore_ascii_case("ssh") || spec.eq_ignore_ascii_case("openssh") {
+            return port == 22;
+        }
+        match spec.split_once(':') {
+            Some((a, b)) => match (a.parse::<u16>(), b.parse::<u16>()) {
+                (Ok(a), Ok(b)) => (a..=b).contains(&port),
+                _ => false,
+            },
+            None => spec.parse() == Ok(port),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_port_spec_covers() {
+            assert!(port_spec_covers("22", 22));
+            assert!(port_spec_covers("2222", 2222));
+            assert!(port_spec_covers("ssh", 22));
+            assert!(port_spec_covers("OpenSSH", 22));
+            assert!(port_spec_covers("1:65535", 2222));
+            assert!(port_spec_covers("2000:3000", 2222));
+            assert!(!port_spec_covers("22", 2222));
+            assert!(!port_spec_covers("ssh", 2222));
+            assert!(!port_spec_covers("80", 22));
+            assert!(!port_spec_covers("23:100", 22));
+            assert!(!port_spec_covers("http", 22));
         }
     }
 }

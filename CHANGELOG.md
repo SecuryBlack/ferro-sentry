@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Firewall**: Adding a `deny` or `reject` rule now refuses to close the SSH port to everyone (the port SSH actually listens on, including ranges like `1:65535` and the `ssh`/`OpenSSH` names), so the owner cannot lock themselves out from the panel. Blocking one source IP, `limit` and UDP-only rules are still allowed.
+
 ## [0.2.30] - 2026-10-29
 
 ### Security
