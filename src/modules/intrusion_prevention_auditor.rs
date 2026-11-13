@@ -167,7 +167,7 @@ fn is_active(service: &str) -> bool {
 /// de esta regla) o si los puertos coinciden.
 #[cfg(target_os = "linux")]
 fn fail2ban_sshd_port_mismatch() -> Option<(String, String)> {
-    let configured_port = configured_ssh_port();
+    let configured_port = crate::modules::ssh_auditor::detect_ssh_port().to_string();
 
     let output = Command::new("fail2ban-client")
         .args(["get", "sshd", "port"])
@@ -198,44 +198,4 @@ fn fail2ban_sshd_port_mismatch() -> Option<(String, String)> {
     } else {
         Some((configured_port, jail_ports_raw))
     }
-}
-
-#[cfg(target_os = "linux")]
-fn configured_ssh_port() -> String {
-    let main_paths = ["/etc/ssh/sshd_config"];
-    let mut port = "22".to_string();
-
-    for path in main_paths {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() >= 2 && parts[0].eq_ignore_ascii_case("port") {
-                    port = parts[1].to_string();
-                }
-            }
-        }
-    }
-
-    if let Ok(entries) = std::fs::read_dir("/etc/ssh/sshd_config.d") {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.extension().is_some_and(|ext| ext == "conf") {
-                if let Ok(content) = std::fs::read_to_string(&p) {
-                    for line in content.lines() {
-                        let trimmed = line.trim();
-                        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                        if parts.len() >= 2 && parts[0].eq_ignore_ascii_case("port") {
-                            port = parts[1].to_string();
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    port
 }

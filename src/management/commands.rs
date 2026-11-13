@@ -1193,28 +1193,33 @@ mod ssh_hardening {
             }
         };
 
-        let mut directives = Vec::new();
+        let mut wanted: Vec<(&str, String)> = Vec::new();
         if opts.disable_password_auth {
-            directives.push("PasswordAuthentication no".to_string());
-            directives.push("KbdInteractiveAuthentication no".to_string());
-            directives.push("ChallengeResponseAuthentication no".to_string());
+            wanted.push(("PasswordAuthentication", "no".into()));
+            wanted.push(("KbdInteractiveAuthentication", "no".into()));
+            wanted.push(("ChallengeResponseAuthentication", "no".into()));
         }
         if opts.disable_root_login {
-            directives.push("PermitRootLogin prohibit-password".to_string());
+            wanted.push(("PermitRootLogin", "prohibit-password".into()));
         }
         if opts.disable_x11_forwarding {
-            directives.push("X11Forwarding no".to_string());
+            wanted.push(("X11Forwarding", "no".into()));
         }
         let max_tries = opts.max_auth_tries.clamp(1, 6);
-        directives.push(format!("MaxAuthTries {max_tries}"));
+        wanted.push(("MaxAuthTries", max_tries.to_string()));
+        let directives: Vec<String> = wanted.iter().map(|(k, v)| format!("{k} {v}")).collect();
 
         let content_to_apply = format!(
             "# SecuryBlack SSH Hardening - Generated automatically\n{}\n",
             directives.join("\n")
         );
 
+        // sshd keeps the first value it reads and loads drop-ins in name order,
+        // so ours must sort first (cloud images ship 50-cloud-init.conf etc.).
         let sshd_config_d = Path::new("/etc/ssh/sshd_config.d");
-        let dropin_file = sshd_config_d.join("99-securyblack-hardening.conf");
+        let dropin_file = sshd_config_d.join("00-securyblack-hardening.conf");
+        let legacy_dropin = sshd_config_d.join("99-securyblack-hardening.conf");
+        let legacy_content = fs::read_to_string(&legacy_dropin).ok();
         let main_config = Path::new("/etc/ssh/sshd_config");
         let main_backup = Path::new("/etc/ssh/sshd_config.sb-bak");
 
@@ -1288,7 +1293,20 @@ mod ssh_hardening {
                     "Failed to write drop-in configuration: {e}"
                 ));
             }
+            let _ = fs::remove_file(&legacy_dropin);
         }
+
+        let rollback = || {
+            if used_dropin {
+                let _ = fs::remove_file(&dropin_file);
+                if let Some(old) = &legacy_content {
+                    let _ = fs::write(&legacy_dropin, old);
+                }
+            }
+            if main_backup.exists() {
+                let _ = fs::copy(main_backup, main_config);
+            }
+        };
 
         // Validate syntax with sshd -t
         let test_res = Command::new(&sshd_bin).arg("-t").output();
@@ -1298,13 +1316,7 @@ mod ssh_hardening {
         };
 
         if !valid {
-            // Rollback immediately
-            if used_dropin {
-                let _ = fs::remove_file(&dropin_file);
-            }
-            if main_backup.exists() {
-                let _ = fs::copy(main_backup, main_config);
-            }
+            rollback();
             let err_msg = test_res
                 .map(|o| {
                     format!(
@@ -1316,6 +1328,23 @@ mod ssh_hardening {
                 .unwrap_or_else(|e| e.to_string());
             return CommandOutcome::failed(format!(
                 "SSH configuration test (sshd -t) failed, rolled back changes: {err_msg}"
+            ));
+        }
+
+        // Valid syntax is not enough: check sshd really ends up with our values.
+        let Some(effective) = crate::modules::ssh_auditor::effective_sshd_config() else {
+            rollback();
+            return CommandOutcome::failed(
+                "Could not read the effective SSH configuration (sshd -T), rolled back changes"
+                    .to_string(),
+            );
+        };
+        let missing = not_applied(&wanted, &effective);
+        if !missing.is_empty() {
+            rollback();
+            return CommandOutcome::failed(format!(
+                "SSH settings overridden by another sshd config file, rolled back changes. Not applied: {}",
+                missing.join(", ")
             ));
         }
 
@@ -1412,11 +1441,68 @@ mod ssh_hardening {
         false
     }
 
+    /// Wanted directives whose effective value (`sshd -T`) differs, as
+    /// `Key wanted (effective: x)`. Keys this sshd does not print are skipped:
+    /// `ChallengeResponseAuthentication` is just an alias on OpenSSH ≥ 8.7.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn not_applied(
+        wanted: &[(&str, String)],
+        effective: &std::collections::HashMap<String, String>,
+    ) -> Vec<String> {
+        // sshd -T prints prohibit-password under its old name.
+        let norm = |v: &str| match v.to_lowercase().as_str() {
+            "without-password" => "prohibit-password".to_string(),
+            other => other.to_string(),
+        };
+        wanted
+            .iter()
+            .filter_map(|(key, want)| {
+                let got = effective.get(&key.to_lowercase())?;
+                (norm(got) != norm(want)).then(|| format!("{key} {want} (effective: {got})"))
+            })
+            .collect()
+    }
+
     #[cfg(not(target_os = "linux"))]
     fn apply_ssh_hardening(_opts: SshHardeningPayload) -> CommandOutcome {
         CommandOutcome::failed(
             "SSH hardening remediation is only supported on Linux hosts".to_string(),
         )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::not_applied;
+        use std::collections::HashMap;
+
+        fn sshd_t(out: &str) -> HashMap<String, String> {
+            out.lines()
+                .filter_map(|l| l.split_once(' '))
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        }
+
+        #[test]
+        fn detects_overridden_and_accepts_aliases() {
+            let wanted = vec![
+                ("PasswordAuthentication", "no".to_string()),
+                ("ChallengeResponseAuthentication", "no".to_string()),
+                ("PermitRootLogin", "prohibit-password".to_string()),
+                ("MaxAuthTries", "3".to_string()),
+            ];
+            // Ubuntu cloud image: 50-cloud-init.conf won over our drop-in.
+            let eff = sshd_t(
+                "passwordauthentication yes\npermitrootlogin without-password\nmaxauthtries 3",
+            );
+            assert_eq!(
+                not_applied(&wanted, &eff),
+                vec!["PasswordAuthentication no (effective: yes)"]
+            );
+            let eff = sshd_t(
+                "passwordauthentication no\npermitrootlogin without-password\nmaxauthtries 3",
+            );
+            assert!(not_applied(&wanted, &eff).is_empty());
+        }
     }
 }
 
@@ -1629,9 +1715,13 @@ mod intrusion_prevention {
         let ssh_port = crate::modules::ssh_auditor::detect_ssh_port();
         let jail_local = Path::new("/etc/fail2ban/jail.local");
 
+        // An existing [sshd] section is left alone, so its bantime is not ours to check
+        let mut wrote_sshd = true;
         let jail_content = if jail_local.exists() {
             let mut existing = fs::read_to_string(jail_local).unwrap_or_default();
-            if !existing.contains("[sshd]") {
+            if existing.contains("[sshd]") {
+                wrote_sshd = false;
+            } else {
                 existing.push_str(&format!(
                     "\n[sshd]\nenabled = true\nport = {ssh_port}\nmaxretry = 5\nbantime = 1h\nfindtime = 10m\n"
                 ));
@@ -1643,37 +1733,112 @@ mod intrusion_prevention {
             )
         };
 
-        if Path::new("/etc/fail2ban").is_dir() {
-            let _ = fs::write(jail_local, jail_content);
+        if let Err(e) = fs::write(jail_local, jail_content) {
+            return CommandOutcome::failed(format!(
+                "Failed to write /etc/fail2ban/jail.local: {e}"
+            ));
         }
 
-        // 3. Enable and start fail2ban service
-        let enable_res = Command::new("systemctl")
-            .args(["enable", "--now", "fail2ban"])
-            .output()
-            .or_else(|_| {
-                Command::new("service")
-                    .args(["fail2ban", "restart"])
-                    .output()
-            });
+        // 3. Enable and restart: the package starts fail2ban with its defaults, and
+        //    `enable --now` would not reload a running service, leaving jail.local unread.
+        let run_ok = |cmd: &str, args: &[&str]| -> Result<(), String> {
+            match Command::new(cmd).args(args).output() {
+                Ok(o) if o.status.success() => Ok(()),
+                Ok(o) => Err(format!(
+                    "{} {}",
+                    String::from_utf8_lossy(&o.stderr),
+                    String::from_utf8_lossy(&o.stdout)
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        };
+        let start_res = if check_cmd("systemctl") {
+            run_ok("systemctl", &["enable", "fail2ban"])
+                .and_then(|_| run_ok("systemctl", &["restart", "fail2ban"]))
+        } else {
+            run_ok("service", &["fail2ban", "restart"])
+        };
+        if let Err(e) = start_res {
+            return CommandOutcome::failed(format!(
+                "fail2ban installed but failed to start service: {e}"
+            ));
+        }
 
-        match enable_res {
-            Ok(o) if o.status.success() => {
-                CommandOutcome::ok(
-                    serde_json::json!({
-                        "success": true,
-                        "message": format!("fail2ban installed and active, protecting SSH on port {ssh_port}"),
-                        "ssh_port": ssh_port,
-                    })
-                    .to_string(),
-                )
+        // 4. Check what fail2ban actually loaded, not just that it started
+        let f2b = |args: &[&str]| -> Option<String> {
+            Command::new("fail2ban-client")
+                .args(args)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        };
+        // The server takes a moment to open its socket after a restart
+        let actions = (0..15).find_map(|i| {
+            if i > 0 {
+                std::thread::sleep(std::time::Duration::from_secs(1));
             }
-            Ok(o) => {
-                let stderr = String::from_utf8_lossy(&o.stderr);
-                let stdout = String::from_utf8_lossy(&o.stdout);
-                CommandOutcome::failed(format!("fail2ban installed but failed to start service: {stderr} {stdout}"))
+            f2b(&["get", "sshd", "actions"])
+        });
+        let Some(actions) = actions else {
+            return CommandOutcome::failed(
+                "fail2ban is running but the sshd jail is not active".to_string(),
+            );
+        };
+        // "The jail sshd has the following actions:\nnftables"; actions without a port are skipped
+        let action_ports: Vec<String> = actions
+            .lines()
+            .skip(1)
+            .flat_map(|l| l.split(','))
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .filter_map(|a| f2b(&["get", "sshd", "action", a, "port"]))
+            .collect();
+        let bantime = if wrote_sshd {
+            f2b(&["get", "sshd", "bantime"])
+        } else {
+            None
+        };
+        if let Some(why) = sshd_jail_mismatch(ssh_port, &action_ports, bantime.as_deref()) {
+            return CommandOutcome::failed(format!(
+                "fail2ban is running but did not apply the configuration: {why}"
+            ));
+        }
+
+        CommandOutcome::ok(
+            serde_json::json!({
+                "success": true,
+                "message": format!("fail2ban installed and active, protecting SSH on port {ssh_port}"),
+                "ssh_port": ssh_port,
+            })
+            .to_string(),
+        )
+    }
+
+    /// Why the sshd jail fail2ban loaded differs from the one written, if it does.
+    /// `action_ports` holds each ban action's `port`; `bantime` (seconds) is only
+    /// passed when we wrote it, as `1h`.
+    #[cfg(any(target_os = "linux", test))]
+    fn sshd_jail_mismatch(
+        ssh_port: u16,
+        action_ports: &[String],
+        bantime: Option<&str>,
+    ) -> Option<String> {
+        let port = ssh_port.to_string();
+        for p in action_ports {
+            let covered = p
+                .split(',')
+                .map(str::trim)
+                .any(|x| x == port || (ssh_port == 22 && x == "ssh"));
+            if !covered {
+                return Some(format!(
+                    "the sshd jail watches port {p}, but SSH listens on {ssh_port}"
+                ));
             }
-            Err(e) => CommandOutcome::failed(format!("Failed to start fail2ban service: {e}")),
+        }
+        match bantime {
+            Some(b) if b != "3600" => Some(format!("sshd bantime is {b}s instead of 3600s (1h)")),
+            _ => None,
         }
     }
 
@@ -1682,6 +1847,24 @@ mod intrusion_prevention {
         CommandOutcome::failed(
             "Intrusion prevention remediation is only supported on Linux hosts".to_string(),
         )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_sshd_jail_mismatch() {
+            let ports = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            // fr-lau-srv-01 on 0.2.30: jail.local written but never loaded
+            assert!(sshd_jail_mismatch(22, &ports(&["ssh"]), Some("600")).is_some());
+            assert!(sshd_jail_mismatch(2222, &ports(&["ssh"]), None).is_some());
+            assert!(sshd_jail_mismatch(22, &ports(&["22"]), Some("3600")).is_none());
+            assert!(sshd_jail_mismatch(22, &ports(&["ssh"]), None).is_none());
+            assert!(sshd_jail_mismatch(2222, &ports(&["22, 2222"]), Some("3600")).is_none());
+            assert!(sshd_jail_mismatch(2222, &ports(&["2222", "22"]), None).is_some());
+            assert!(sshd_jail_mismatch(22, &[], Some("3600")).is_none());
+        }
     }
 }
 
