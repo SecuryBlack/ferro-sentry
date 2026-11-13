@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **SSH hardening**: The fix now closes password login on cloud images too (Ubuntu with cloud-init and `ssh_pwauth`). Its file was `99-securyblack-hardening.conf`, read after `50-cloud-init.conf`, and sshd keeps the first value it reads, so `PasswordAuthentication yes` stayed on while the panel reported success. The file is now `00-securyblack-hardening.conf` (the old one is removed), and after writing it the agent checks with `sshd -T` that every setting took effect; if one did not, it rolls everything back and says which.
 - **SSH audit**: Findings use the settings sshd actually applies (`sshd -T`), not a guess from the files, which picked up whichever value came last. Without root it reads the files in sshd's order. The fail2ban port check uses the same value.
+- **Fail2ban**: Installing fail2ban from the panel now applies its configuration. The package starts fail2ban with its defaults, and the agent wrote `jail.local` afterwards without restarting the service, so the 1-hour ban and the SSH port were never loaded (bans lasted 10 minutes, and with SSH on a port other than 22 the jail watched the wrong one) while the panel reported success. The agent now restarts fail2ban after writing the file, reports an error if the file cannot be written, and checks with `fail2ban-client` that the sshd jail watches the SSH port and uses the 1-hour ban.
 
 ## [0.2.30] - 2026-10-29
 
