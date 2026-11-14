@@ -5,7 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.31] - 2026-11-14
+
+### Security
+- **Dependencies**: sb-agent-core 0.4.3 (`zip` 9.x and `self_update` 1.3.3), and `rustls` 0.23.46. This closes the Dependabot alerts for `zip` (critical) and `rustls`.
 
 ### Fixed
 - **SSH hardening**: The fix now closes password login on cloud images too (Ubuntu with cloud-init and `ssh_pwauth`). Its file was `99-securyblack-hardening.conf`, read after `50-cloud-init.conf`, and sshd keeps the first value it reads, so `PasswordAuthentication yes` stayed on while the panel reported success. The file is now `00-securyblack-hardening.conf` (the old one is removed), and after writing it the agent checks with `sshd -T` that every setting took effect; if one did not, it rolls everything back and says which.
