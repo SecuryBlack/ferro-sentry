@@ -280,6 +280,24 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
                     }
                 }
 
+                // ─── Secrets Auditor (secretos en claro en el disco) ───
+                tracing::info!("Ejecutando Secrets Auditor…");
+                match modules::secrets_auditor::scan(&engine).await {
+                    Ok(findings) => {
+                        tracing::info!(count = findings.len(), "Secrets Auditor completado");
+                        for event in findings {
+                            if let Some(event) = engine.process(event).await {
+                                if let Err(e) = output.send(event).await {
+                                    tracing::error!(error = %e, "Error enviando evento de Secrets Auditor");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Secrets Auditor falló");
+                    }
+                }
+
                 // ─── SSL/TLS Auditor ───
                 tracing::info!("Ejecutando SSL/TLS Auditor…");
                 match modules::ssl_auditor::scan(&engine).await {

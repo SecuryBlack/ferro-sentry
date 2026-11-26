@@ -26,7 +26,7 @@ Follow the agent-specific installation and configuration instructions below. Use
 
 ## What it does
 
-- **Hourly host audit.** Twelve modules check the server and report findings. Firewall, intrusion prevention, permission, process and update findings close on their own once the condition is gone.
+- **Hourly host audit.** Twelve modules check the server and report findings. Firewall, intrusion prevention, permission, process, secrets and update findings close on their own once the condition is gone.
 - **Remediation on request.** From the SecuryBlack panel you can harden SSH, enable unattended upgrades, install and manage fail2ban, manage UFW rules and CrowdSec. Critical actions require Sudo Mode (passkey) in the panel.
 - **Signed self-updates** through `sb-agent-core`: daily check, ed25519-signed releases.
 
@@ -44,8 +44,9 @@ All modules run on Linux. The Windows build only runs the port scanner and file 
 | **Permission Auditor** | SUID/SGID binaries in `/tmp`, `/var/tmp`, `/dev/shm`; world-writable critical files in `/etc`; sudo commands not logged | PERM-001 … PERM-003 |
 | **Persistence Hunter** | Entries in `/etc/crontab` and `/etc/cron.d` that run from temporary directories or download payloads | PERSIST-001 |
 | **Process Sentinel** | Processes running from temporary directories; processes whose binary was deleted (stale after an upgrade, or suspicious) | PROC-001, PROC-002 |
-| **File Integrity** | SHA-256 changes between scans in `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`, `sshd_config`, `/etc/crontab`, `/etc/hosts` | FIM-001 |
-| **Auth Monitor** | Failed logins in `/var/log/auth.log` since the previous scan | AUTH-001 |
+| **File Integrity** | SHA-256 changes between scans in `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`, `sshd_config`, `/etc/crontab`, `/etc/hosts` and every user's `~/.ssh/authorized_keys`; a new `authorized_keys` file is reported too | FIM-001 |
+| **Auth Monitor** | Failed logins in `/var/log/auth.log` since the previous scan; successful SSH logins from an address never seen for that user (known addresses are kept in `/var/lib/ferro-sentry/known_logins.json`, learned from the existing log on first run) | AUTH-001, AUTH-002 |
+| **Secrets Auditor** | Credentials stored in plaintext: `~/.aws/credentials`, npm/PyPI/Docker/GitHub CLI/Kubernetes tokens, `.git-credentials`, `.netrc`, SSH private keys without a passphrase, and `.env` files any user can read. Only the path and type are reported, never the content | SECRETS-001 |
 | **SSL Auditor** | Lists certificates in `/etc/letsencrypt/live` (informational; expiry is checked externally by SecuryBlack uptime monitoring) | SSL-001 |
 
 ## Output modes

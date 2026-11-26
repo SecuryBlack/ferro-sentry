@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Secrets audit (SECRETS-001)**: Reports credentials stored in plaintext on the server: `~/.aws/credentials`, npm, PyPI, Docker, GitHub CLI and Kubernetes tokens, `.git-credentials`, `.netrc`, SSH private keys without a passphrase, and `.env` files that any user can read. These are the first things an intruder with stolen credentials, or a malicious npm package, collects. Only the path and the type are sent, never the content.
+- **New login address (AUTH-002)**: A successful SSH login from an address never seen for that user raises a finding (high if it used a password). Stolen credentials produce successful logins, which the failed-login check cannot see. Known addresses are learned from the existing `auth.log` on first run and kept in `/var/lib/ferro-sentry/known_logins.json`, so restarts and updates do not repeat them.
+- **SSH keys integrity**: File integrity now also watches every user's `~/.ssh/authorized_keys` (and `administrators_authorized_keys` on Windows), and reports when one appears, the usual way to keep access after stealing a key.
+
 ## [0.2.31] - 2026-11-14
 
 ### Security
