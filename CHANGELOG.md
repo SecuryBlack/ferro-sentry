@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.32] - 2026-11-26
 
 ### Added
 - **Secrets audit (SECRETS-001)**: Reports credentials stored in plaintext on the server: `~/.aws/credentials`, npm, PyPI, Docker, GitHub CLI and Kubernetes tokens, `.git-credentials`, `.netrc`, SSH private keys without a passphrase, and `.env` files that any user can read. These are the first things an intruder with stolen credentials, or a malicious npm package, collects. Only the path and the type are sent, never the content.
