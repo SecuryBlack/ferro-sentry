@@ -19,13 +19,102 @@ static AUTH_LOG_OFFSET: Mutex<Option<u64>> = Mutex::new(None);
 #[cfg(target_os = "linux")]
 const AUTH_LOG_PATH: &str = "/var/log/auth.log";
 
+/// Fallidos acumulados desde el último escaneo horario. La lectura en vivo
+/// (cada pocos segundos) solo suma; AUTH-001 se emite cada hora con el total,
+/// así los umbrales de 20 y 100 siguen significando «por hora».
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct FailedTally {
+    failed_password: u32,
+    invalid_user: u32,
+    bytes: usize,
+    sample_ips: Vec<String>,
+}
+
+#[cfg(target_os = "linux")]
+static FAILED: Mutex<FailedTally> = Mutex::new(FailedTally {
+    failed_password: 0,
+    invalid_user: 0,
+    bytes: 0,
+    sample_ips: Vec::new(),
+});
+
+/// La pasada en vivo y la horaria no se pisan: comparten offset y el fichero
+/// de accesos conocidos.
+#[cfg(target_os = "linux")]
+static RUN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Escaneo horario: lo nuevo del log (como `scan_live`) más AUTH-001 con los
+/// fallidos de toda la hora.
 pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+    let mut findings = scan_live(engine).await?;
+
+    #[cfg(target_os = "linux")]
+    {
+        let FailedTally {
+            failed_password,
+            invalid_user,
+            bytes,
+            sample_ips,
+        } = std::mem::take(&mut *FAILED.lock().unwrap());
+
+        let total_failed = failed_password + invalid_user;
+
+        if total_failed > 0 {
+            let severity = if total_failed >= 100 {
+                Severity::Critical
+            } else if total_failed >= 20 {
+                Severity::High
+            } else {
+                Severity::Low
+            };
+
+            let details = json!({
+                "rule_id": "AUTH-001",
+                "title": "Failed Login Attempts Detected",
+                "failed_password_count": failed_password,
+                "invalid_user_count": invalid_user,
+                "total_failed": total_failed,
+                "window_bytes_scanned": bytes,
+                "sample_source_ips": sample_ips,
+                "summary": format!(
+                    "{} failed login attempts detected since the last scan ({} failed password, {} invalid user) — possible brute-force activity.",
+                    total_failed, failed_password, invalid_user
+                ),
+                "remediation": "Verify fail2ban/CrowdSec are banning the source IPs above; consider key-only auth if not already enforced."
+            });
+
+            findings.push(
+                engine
+                    .build_event(
+                        "finding",
+                        "posture",
+                        severity,
+                        "auth_monitor",
+                        details,
+                        Some("failed_login_attempts"),
+                    )
+                    .await,
+            );
+        }
+    }
+
+    let _ = engine;
+
+    Ok(findings)
+}
+
+/// Lo nuevo de `auth.log` desde la última lectura: AUTH-002 al momento.
+/// Se llama cada pocos segundos; solo lee los bytes añadidos.
+pub async fn scan_live(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut findings = Vec::new();
 
     #[cfg(target_os = "linux")]
     {
         use std::io::{Read, Seek, SeekFrom};
+        let _run = RUN.lock().await;
 
         let Ok(mut file) = std::fs::File::open(AUTH_LOG_PATH) else {
             // Sin auth.log (p.ej. distro que solo usa journald sin
@@ -121,67 +210,25 @@ pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
             );
         }
 
-        let mut failed_password = 0u32;
-        let mut invalid_user = 0u32;
-        let mut sample_ips: Vec<String> = Vec::new();
-
+        // AUTH-001: solo se acumula; lo emite `scan` cada hora.
+        let mut tally = FAILED.lock().unwrap();
+        tally.bytes += content.len();
         for line in content.lines() {
             if line.contains("Failed password") || line.contains("authentication failure") {
-                failed_password += 1;
+                tally.failed_password += 1;
                 if let Some(ip) = extract_ip(line) {
-                    if !sample_ips.contains(&ip) && sample_ips.len() < 10 {
-                        sample_ips.push(ip);
+                    if !tally.sample_ips.contains(&ip) && tally.sample_ips.len() < 10 {
+                        tally.sample_ips.push(ip);
                     }
                 }
             }
             if line.contains("Invalid user") {
-                invalid_user += 1;
+                tally.invalid_user += 1;
             }
-        }
-
-        let total_failed = failed_password + invalid_user;
-
-        if total_failed > 0 {
-            let severity = if total_failed >= 100 {
-                Severity::Critical
-            } else if total_failed >= 20 {
-                Severity::High
-            } else {
-                Severity::Low
-            };
-
-            let details = json!({
-                "rule_id": "AUTH-001",
-                "title": "Failed Login Attempts Detected",
-                "failed_password_count": failed_password,
-                "invalid_user_count": invalid_user,
-                "total_failed": total_failed,
-                "window_bytes_scanned": content.len(),
-                "sample_source_ips": sample_ips,
-                "summary": format!(
-                    "{} failed login attempts detected since the last scan ({} failed password, {} invalid user) — possible brute-force activity.",
-                    total_failed, failed_password, invalid_user
-                ),
-                "remediation": "Verify fail2ban/CrowdSec are banning the source IPs above; consider key-only auth if not already enforced."
-            });
-
-            findings.push(
-                engine
-                    .build_event(
-                        "finding",
-                        "posture",
-                        severity,
-                        "auth_monitor",
-                        details,
-                        Some("failed_login_attempts"),
-                    )
-                    .await,
-            );
         }
     }
 
     let _ = engine;
-
     Ok(findings)
 }
 

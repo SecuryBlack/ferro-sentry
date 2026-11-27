@@ -20,7 +20,7 @@ Follow the agent-specific installation and configuration instructions below. Use
 > **Part of the SecuryBlack ecosystem:**
 > [OxiPulse (Metrics)](https://github.com/securyblack/oxi-pulse) · **FerroSentry (Security)** · [CromoForge (Docker/PostgreSQL)](https://github.com/securyblack/cromo-forge) · [TitanVault (Backups)](https://github.com/securyblack/titan-vault) · [SecuryBlack Cloud](https://securyblack.com)
 
-> **Scope:** this README lists what the code does today. Every audit runs on a schedule (hourly); there is no real-time sensor yet. Remediation only runs when you ask for it from the panel.
+> **Scope:** this README lists what the code does today. Audits run hourly, except file integrity and new-address logins, which are checked every 10 seconds. Remediation only runs when you ask for it from the panel.
 
 ---
 
@@ -44,8 +44,8 @@ All modules run on Linux. The Windows build only runs the port scanner and file 
 | **Permission Auditor** | SUID/SGID binaries in `/tmp`, `/var/tmp`, `/dev/shm`; world-writable critical files in `/etc`; sudo commands not logged | PERM-001 … PERM-003 |
 | **Persistence Hunter** | Entries in `/etc/crontab` and `/etc/cron.d` that run from temporary directories or download payloads | PERSIST-001 |
 | **Process Sentinel** | Processes running from temporary directories; processes whose binary was deleted (stale after an upgrade, or suspicious) | PROC-001, PROC-002 |
-| **File Integrity** | SHA-256 changes between scans in `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`, `sshd_config`, `/etc/crontab`, `/etc/hosts` and every user's `~/.ssh/authorized_keys`; a new `authorized_keys` file is reported too | FIM-001 |
-| **Auth Monitor** | Failed logins in `/var/log/auth.log` since the previous scan; successful SSH logins from an address never seen for that user (known addresses are kept in `/var/lib/ferro-sentry/known_logins.json`, learned from the existing log on first run) | AUTH-001, AUTH-002 |
+| **File Integrity** | Every 10 seconds, SHA-256 changes in `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`, `sshd_config`, `/etc/crontab`, `/etc/hosts` and every user's `~/.ssh/authorized_keys`; a new `authorized_keys` file is reported too | FIM-001 |
+| **Auth Monitor** | Failed logins in `/var/log/auth.log` since the previous scan; successful SSH logins (checked every 10 seconds) from an address never seen for that user (known addresses are kept in `/var/lib/ferro-sentry/known_logins.json`, learned from the existing log on first run) | AUTH-001, AUTH-002 |
 | **Secrets Auditor** | Credentials stored in plaintext: `~/.aws/credentials`, npm/PyPI/Docker/GitHub CLI/Kubernetes tokens, `.git-credentials`, `.netrc`, SSH private keys without a passphrase, and `.env` files any user can read. Only the path and type are reported, never the content | SECRETS-001 |
 | **SSL Auditor** | Lists certificates in `/etc/letsencrypt/live` (informational; expiry is checked externally by SecuryBlack uptime monitoring) | SSL-001 |
 

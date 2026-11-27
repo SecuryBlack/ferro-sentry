@@ -9,7 +9,14 @@ use std::sync::Mutex;
 
 static FIM_BASELINE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
+/// La pasada en vivo (cada pocos segundos) y la horaria no se pisan la base.
+static RUN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Se llama cada pocos segundos desde `main::live_watch` y también cada hora.
+/// Son una docena de ficheros pequeños: hashearlos cuesta menos que vigilar
+/// con inotify, que pierde el watch cuando un editor reemplaza el fichero.
 pub async fn scan(engine: &EventEngine) -> Result<Vec<SecurityEvent>> {
+    let _run = RUN.lock().await;
     let mut findings = Vec::new();
     let targets = get_target_files();
 
