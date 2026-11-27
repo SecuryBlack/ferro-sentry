@@ -91,7 +91,8 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
         _ => Arc::new(LocalFileOutput::new(&cfg.local_file_path)),
     };
 
-    let engine = EventEngine::new();
+    let engine = Arc::new(EventEngine::new());
+    tokio::spawn(live_watch(engine.clone(), output.clone()));
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600)); // Escaneo cada hora
 
     loop {
@@ -330,6 +331,43 @@ async fn run(mut shutdown: tokio::sync::oneshot::Receiver<()>) {
                 tracing::info!("Señal de apagado recibida, deteniendo Ferro-Sentry");
                 status_handle.set_state("stopping");
                 break;
+            }
+        }
+    }
+}
+
+/// Cada cuánto se revisan los ficheros críticos y lo nuevo de `auth.log`.
+const LIVE_SECS: u64 = 10;
+
+/// Tiempo real sin dependencias: FIM y AUTH-002 cada `LIVE_SECS`. Las dos
+/// pasadas son incrementales (hash de una docena de ficheros pequeños y los
+/// bytes nuevos del log), así que el coste es despreciable. En su propia tarea
+/// para que el escaneo horario, que tarda minutos, no lo retrase.
+async fn live_watch(engine: Arc<EventEngine>, output: Arc<dyn Output>) {
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(LIVE_SECS));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tick.tick().await;
+        let results = [
+            ("FIM", modules::fim::scan(&engine).await),
+            (
+                "Auth Monitor",
+                modules::auth_monitor::scan_live(&engine).await,
+            ),
+        ];
+        for (name, result) in results {
+            match result {
+                Ok(findings) => {
+                    for event in findings {
+                        if let Some(event) = engine.process(event).await {
+                            tracing::info!(module = name, rule = ?event.rule_triggered, "Hallazgo en tiempo real");
+                            if let Err(e) = output.send(event).await {
+                                tracing::error!(error = %e, module = name, "Error enviando evento en tiempo real");
+                            }
+                        }
+                    }
+                }
+                Err(e) => tracing::error!(error = %e, module = name, "Pasada en tiempo real falló"),
             }
         }
     }

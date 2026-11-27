@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Real-time detection**: File integrity (including every `authorized_keys`) and new-address logins (AUTH-002) are now checked every 10 seconds instead of every hour, so a key added by an intruder or a login with stolen credentials is reported within seconds. It needs no extra dependency and adds almost no load: it hashes a dozen small files and reads only the new lines of `auth.log`. Failed-login counts (AUTH-001) are still reported hourly, with the same thresholds.
+
 ## [0.2.32] - 2026-11-26
 
 ### Added
